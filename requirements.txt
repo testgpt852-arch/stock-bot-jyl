@@ -1,0 +1,23 @@
+# 조기경보 시스템 v2.2 - Requirements
+
+# Telegram
+python-telegram-bot==21.0
+telegram==0.0.1
+
+# Google AI
+google-genai==0.2.2
+
+# 데이터 수집
+aiohttp==3.9.0
+beautifulsoup4==4.12.0
+feedparser==6.0.10
+yfinance==0.2.40
+
+# 유틸리티
+python-dotenv==1.0.0
+pytz==2024.1
+lxml==5.1.0
+
+# 선택 (현재 미사용)
+# finnhub-python
+# alpha-vantage
