@@ -82,8 +82,17 @@ class AIBrainV2_2:
                 
                 text = response.text
                 
-                if is_gemma or '```' in text:
-                    text = re.sub(r'```json\n|```', '', text).strip()
+                # 1. 마크다운 제거
+                if '```' in text:
+                    text = re.sub(r'```json|```', '', text).strip()
+                
+                # 2. 강제 JSON 추출 (가장 확실한 방법)
+                # 첫 번째 '{'와 마지막 '}' 사이만 잘라냅니다.
+                start_idx = text.find('{')
+                end_idx = text.rfind('}')
+                
+                if start_idx != -1 and end_idx != -1:
+                    text = text[start_idx : end_idx + 1]
                 
                 result = json.loads(text)
                 score = result.get('score', 0)
