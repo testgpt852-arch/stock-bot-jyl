@@ -365,7 +365,7 @@ class TelegramBotV2_2:
             await self.app.bot.send_message(
                 chat_id=self.chat_id,
                 text=text,
-                parse_mode='Markdown'
+                parse_mode=None
             )
         except Exception as e:
             logger.error(f"메시지 전송 실패: {e}")
