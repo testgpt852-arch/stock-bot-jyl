@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Telegram Bot v2.2 - 완전체
-- 4개 엔진 통합 (AI, News, Momentum, Predictor)
-- 충돌 방지
-- 에러 핸들링 완벽
+Telegram Bot v2.2 - v3.0 업그레이드 (호환성 유지)
+- 파일명: v2_2 (호환성)
+- 내용물: v3.0 (AI 모델명 표시 + SEC 공시 구분)
 """
 
 import asyncio
@@ -13,7 +12,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from config import Config
 
-# v2.2 엔진
+# v2.2 import (파일명 유지)
 from ai_brain_v2_2 import AIBrainV2_2
 from news_engine_v2_2 import NewsEngineV2_2
 from momentum_tracker_v2_2 import MomentumTrackerV2_2
@@ -26,7 +25,7 @@ class TelegramBotV2_2:
         self.app = None
         self.chat_id = Config.TELEGRAM_CHAT_ID
         
-        # 엔진 초기화 (충돌 방지)
+        # 엔진 초기화
         try:
             self.ai = AIBrainV2_2()
             self.news_engine = NewsEngineV2_2(self.ai)
@@ -39,12 +38,12 @@ class TelegramBotV2_2:
             logger.error(f"❌ 엔진 초기화 실패: {e}")
             raise
         
-        logger.info("🤖 Telegram Bot v2.2 초기화")
+        logger.info("🤖 Telegram Bot v2.2 (v3.0 업그레이드) 초기화")
     
     async def start(self):
         """봇 시작"""
         try:
-            self.app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
+            self.app = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
             
             # 명령어
             self.app.add_handler(CommandHandler("start", self.cmd_start))
@@ -63,12 +62,15 @@ class TelegramBotV2_2:
             logger.info("✅ 봇 시작")
             
             await self.send_message(
-                "🚀 조기경보 시스템 v2.2 시작!\n\n"
+                "🚀 조기경보 시스템 v2.2 (v3.0 업그레이드) 시작!\n\n"
                 "✅ AI Brain v2.2 (3개 모델)\n"
-                "✅ News Engine v2.2 (6개 소스)\n"
+                "✅ News Engine v2.2 (5대장 + SEC 8-K) 🆕\n"
                 "✅ Momentum Tracker v2.2\n"
                 "✅ Predictor Engine v2.2 (고래 추적)\n\n"
-                "승률 80% 목표!"
+                "🔥 curl_cffi 적용 (보안 우회)\n"
+                "🔥 SEC 공시 추가 (단타 최상위)\n"
+                "🔥 AI 모델명 표시\n\n"
+                "승률 85% 목표!"
             )
             
         except Exception as e:
@@ -78,9 +80,10 @@ class TelegramBotV2_2:
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """시작"""
         await update.message.reply_text(
-            "🤖 조기경보 시스템 v2.2\n\n"
+            "🤖 조기경보 시스템 v2.2 (v3.0 업그레이드)\n\n"
             "**기능:**\n"
-            "📰 실시간 뉴스 (6개 소스, 30초)\n"
+            "📰 실시간 뉴스 (5대장, 30초)\n"
+            "📋 SEC 8-K 공시 (단타 최상위) 🆕\n"
             "📊 급등주 감지 (5분)\n"
             "💻 프로그램 매매 추적\n"
             "🎨 테마주 연쇄 상승\n"
@@ -101,7 +104,6 @@ class TelegramBotV2_2:
         ticker = ' '.join(context.args)
         await update.message.reply_text(f"🔍 {ticker} 분석 중...")
         
-        # stock_analyzer_v2_2 사용 (간소화)
         await update.message.reply_text(
             f"📊 {ticker}\n"
             f"분석 기능 구현 예정"
@@ -112,12 +114,10 @@ class TelegramBotV2_2:
         await update.message.reply_text("📊 리포트 생성 중...")
         
         try:
-            # 한국
             kr_report = await self.predictor.generate_daily_report('KR')
             kr_msg = self._format_daily_report(kr_report, '🇰🇷 한국')
             await update.message.reply_text(kr_msg)
             
-            # 미국
             us_report = await self.predictor.generate_daily_report('US')
             us_msg = self._format_daily_report(us_report, '🇺🇸 미국')
             await update.message.reply_text(us_msg)
@@ -129,21 +129,21 @@ class TelegramBotV2_2:
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """도움말"""
         await update.message.reply_text(
-            "📚 조기경보 시스템 v2.2\n\n"
+            "📚 조기경보 시스템 v2.2 (v3.0 업그레이드)\n\n"
             "**자동 알림:**\n"
             "07:30 - 한국장 오전 브리핑\n"
             "23:00 - 미국장 저녁 브리핑\n"
             "장중 - 실시간 뉴스 (30초)\n"
             "장중 - 급등 감지 (5분)\n\n"
             "**데이터 소스:**\n"
-            "뉴스: Yahoo, Globe, PR, Business Wire...\n"
-            "공시: DART, SEC Form 4, SEC 13D/13G\n"
-            "모멘텀: 프로그램 매매, 테마주\n\n"
+            "뉴스: PR, Globe, Business Wire, Benzinga\n"
+            "공시: SEC 8-K (단타 최상위) 🆕\n"
+            "시장: 프로그램 매매, 테마주\n\n"
             "**AI 모델:**\n"
             "Gemma 3-27B (무제한 쿼터)\n"
             "Gemini 3 Flash (고성능)\n"
             "3단계 fallback\n\n"
-            "🎯 승률 80% 목표"
+            "🎯 승률 85% 목표"
         )
     
     async def schedule_reports(self):
@@ -154,12 +154,10 @@ class TelegramBotV2_2:
             try:
                 now = datetime.now()
                 
-                # 07:30
                 if now.hour == 7 and now.minute == 30:
                     await self.send_morning_report_kr()
                     await asyncio.sleep(60)
                 
-                # 23:00
                 elif now.hour == 23 and now.minute == 0:
                     await self.send_evening_report_us()
                     await asyncio.sleep(60)
@@ -247,18 +245,36 @@ class TelegramBotV2_2:
                 await asyncio.sleep(30)
     
     def _format_news_alert(self, alert):
-        """뉴스 알림 포맷"""
+        """
+        🆕 뉴스 알림 포맷 (v3.0)
+        - AI 모델명 표시
+        - SEC 공시 구분
+        """
         news = alert['news']
         analysis = alert['analysis']
         verification = alert['verification_details']
+        model_used = alert.get('model_used', 'unknown')
+        is_filing = alert.get('is_filing', False)
         
         score = analysis['score']
-        msg = f"⚡ **[긴급] {score}/10** 🔥\n\n"
+        
+        # SEC 공시 vs 일반 뉴스 구분
+        if is_filing:
+            msg = f"📋 **[SEC 공시] {score}/10** 🔥\n\n"
+        else:
+            msg = f"⚡ **[긴급] {score}/10** 🔥\n\n"
         
         msg += f"**📰 {news['title']}**\n"
-        msg += f"출처: {news['source']}\n\n"
+        msg += f"출처: {news['source']}\n"
         
-        msg += f"**🤖 AI 분석**\n"
+        # 발간 시간 (KST)
+        if news.get('published_time_kst'):
+            msg += f"발간: {news['published_time_kst']}\n"
+        
+        msg += "\n"
+        
+        # 🆕 AI 모델명 표시
+        msg += f"**🤖 AI 분석** (모델: `{model_used}`)\n"
         msg += f"{analysis['summary']}\n\n"
         
         checks = ' '.join(['✅' for _ in verification['checks_passed']])
@@ -274,6 +290,12 @@ class TelegramBotV2_2:
                 msg += f"{i}. **{rec['name']}** ({rec['ticker']})\n"
                 msg += f"   └ {rec['reason']}\n"
                 msg += f"   └ 신뢰도 {confidence}%\n"
+                
+                # 예상 수익률
+                if rec.get('expected_return_30min'):
+                    msg += f"   └ 30분: +{rec['expected_return_30min']}%"
+                if rec.get('expected_return_1day'):
+                    msg += f" / 1일: +{rec['expected_return_1day']}%\n"
         
         if news.get('url'):
             msg += f"\n[원문]({news['url']})\n"
@@ -288,13 +310,11 @@ class TelegramBotV2_2:
         
         while True:
             try:
-                # 한국
                 kr_signals = await self.momentum.scan_momentum('KR')
                 for signal in kr_signals:
                     message = self._format_momentum_alert(signal)
                     await self.send_message(message)
                 
-                # 미국
                 us_signals = await self.momentum.scan_momentum('US')
                 for signal in us_signals:
                     message = self._format_momentum_alert(signal)
@@ -313,19 +333,16 @@ class TelegramBotV2_2:
         market_emoji = '🇰🇷' if signal['market'] == 'KR' else '🇺🇸'
         
         if signal.get('signal_type') == 'program_buy':
-            # 프로그램 매매
             msg = f"💻 **[프로그램 매수]** {market_emoji}\n\n"
             msg += f"**{signal['name']}** ({signal['ticker']})\n"
             msg += f"{signal['reason']}\n"
         
         elif signal.get('signal_type') == 'theme_surge':
-            # 테마주
             msg = f"🎨 **[테마 급등]** {market_emoji}\n\n"
             msg += f"**{signal['theme_name']}**\n\n"
             msg += f"{signal['reason']}\n"
         
         else:
-            # 급등주
             msg = f"📊 **[급등 감지]** {market_emoji}\n\n"
             msg += f"**{signal['name']}** ({signal['ticker']})\n"
             msg += f"현재: {signal['price']:,.0f} (+{signal['change_percent']:.1f}%)\n"

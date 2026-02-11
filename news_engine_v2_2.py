@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-News Engine v2.2 - 완전체
-- 기존 모든 노하우 통합
-- Business Wire 추가
-- 뉴스 소스 6개
-- 중복 방지 완벽
+News Engine v2.2 - v3.0 업그레이드 (호환성 유지)
+- 파일명: v2_2 (호환성)
+- 내용물: v3.0 (최신)
+- 5대장 뉴스 소스 + SEC 8-K
+- curl_cffi 보안 우회
+- KST 시간 처리
+- AI 모델명 추적
 """
 
 import asyncio
-import aiohttp
 import logging
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
@@ -16,13 +17,14 @@ import feedparser
 import pytz
 from difflib import SequenceMatcher
 import re
+from curl_cffi.requests import AsyncSession
 
 from ai_brain_v2_2 import AIBrainV2_2
 from config import Config
 
 logger = logging.getLogger(__name__)
 
-class NewsEngineV2_2:
+class NewsEngineV2_2:  # 🔥 클래스명 v2_2 유지!
     def __init__(self, ai_brain):
         self.ai = ai_brain
         self.seen_urls = set()
@@ -31,131 +33,120 @@ class NewsEngineV2_2:
         # Timezone
         self.kst = pytz.timezone('Asia/Seoul')
         
-        # 🆕 뉴스 소스 6개 (Business Wire 추가)
+        # 🆕 5대장 뉴스 소스 + SEC 8-K (v3.0)
         self.sources = [
             {
-                'name': 'Yahoo Finance',
+                'name': 'PR Newswire',
                 'type': 'rss',
-                'url': 'https://finance.yahoo.com/news/rssindex',
+                'url': 'https://www.prnewswire.com/rss/news-releases-list.rss',
                 'market': 'US'
             },
             {
                 'name': 'GlobeNewswire',
                 'type': 'rss',
-                'url': 'https://www.globenewswire.com/RssFeed',
-                'market': 'US'
-            },
-            {
-                'name': 'PR Newswire',
-                'type': 'html',
-                'url': 'https://www.prnewswire.com/news-releases/news-releases-list/',
-                'base_url': 'https://www.prnewswire.com',
+                'url': 'https://www.globenewswire.com/RssFeed/subjectcode/15-allcategories/feedTitle/GlobeNewswire%20-%20All%20Categories',
                 'market': 'US'
             },
             {
                 'name': 'Business Wire',
-                'type': 'rss',
-                'url': 'https://feeds.businesswire.com/businesswire/news',
+                'type': 'html',
+                'url': 'https://www.businesswire.com/portal/site/home/news/',
+                'pattern': r'/news/home/\d+/',
                 'market': 'US'
             },
             {
-                'name': 'Marketwired',
-                'type': 'rss',
-                'url': 'https://www.marketwired.com/news_feed',
-                'market': 'US'
-            },
-            {
-                'name': 'AccessWire',
-                'type': 'rss',
-                'url': 'https://www.accesswire.com/newsroom/rss',
+                'name': 'Benzinga',
+                'type': 'html',
+                'url': 'https://www.benzinga.com/news',
+                'pattern': r'/news/\d+/',
                 'market': 'US'
             },
         ]
         
-        logger.info("📰 News Engine v2.2 초기화 (6개 소스)")
+        # SEC 8-K 공시
+        self.sec_url = 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company=&dateb=&owner=include&start=0&count=100&output=atom'
+        
+        logger.info("📰 News Engine v2.2 (v3.0 업그레이드) 초기화")
     
     async def scan_all_sources(self):
-        """모든 뉴스 소스 병렬 스캔"""
-        tasks = []
-        
-        for source in self.sources:
-            if source['type'] == 'rss':
-                tasks.append(self._fetch_rss(source))
-            elif source['type'] == 'html':
-                tasks.append(self._fetch_html(source))
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        news_list = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(f"{self.sources[i]['name']} 스캔 오류: {result}")
-            elif result:
-                news_list.extend(result)
-        
-        # 시간순 정렬
-        news_list.sort(key=lambda x: x.get('published_timestamp', 0), reverse=True)
-        
-        logger.info(f"📊 뉴스 수집: {len(news_list)}개 (6개 소스)")
-        return news_list
+        """모든 뉴스 소스 병렬 스캔 (curl_cffi)"""
+        async with AsyncSession(impersonate="chrome110") as session:
+            tasks = []
+            
+            for source in self.sources:
+                if source['type'] == 'rss':
+                    tasks.append(self._fetch_rss(session, source))
+                elif source['type'] == 'html':
+                    tasks.append(self._fetch_html(session, source))
+            
+            tasks.append(self._fetch_sec(session))
+            
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            news_list = []
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    source_name = self.sources[i]['name'] if i < len(self.sources) else 'SEC 8-K'
+                    logger.error(f"{source_name} 스캔 오류: {result}")
+                elif result:
+                    news_list.extend(result)
+            
+            news_list.sort(key=lambda x: x.get('published_timestamp', 0), reverse=True)
+            
+            logger.info(f"📊 뉴스 수집: {len(news_list)}개 (5대장 + SEC)")
+            return news_list
     
-    async def _fetch_rss(self, source):
+    async def _fetch_rss(self, session, source):
         """RSS 피드 스캔"""
         items = []
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(source['url'], headers=headers, timeout=10) as resp:
-                    if resp.status != 200:
-                        logger.warning(f"{source['name']} RSS 실패: {resp.status}")
-                        return items
+            response = await session.get(source['url'], timeout=15)
+            
+            if response.status_code != 200:
+                logger.warning(f"{source['name']} RSS 실패: {response.status_code}")
+                return items
+            
+            feed = feedparser.parse(response.text)
+            
+            if not feed.entries:
+                logger.warning(f"{source['name']} 엔트리 없음")
+                return items
+            
+            for entry in feed.entries[:20]:
+                try:
+                    title = entry.title
+                    link = entry.link
                     
-                    feed = feedparser.parse(await resp.text())
+                    if self._is_duplicate(title, link):
+                        continue
                     
-                    if not feed.entries:
-                        logger.warning(f"{source['name']} 엔트리 없음")
-                        return items
+                    pub_time = self._extract_rss_time(entry)
                     
-                    for entry in feed.entries[:20]:
-                        try:
-                            title = entry.title
-                            link = entry.link
-                            
-                            # 중복 체크
-                            if self._is_duplicate(title, link):
-                                continue
-                            
-                            # 시간 추출
-                            pub_time = self._extract_time(entry, source['name'])
-                            
-                            # 24시간 필터
-                            age_hours = (datetime.now(self.kst) - pub_time).total_seconds() / 3600
-                            if age_hours > 24:
-                                continue
-                            
-                            # 키워드 필터
-                            if not self._passes_keyword_filter(title):
-                                continue
-                            
-                            # 등록
-                            self._register_news(title, link)
-                            
-                            items.append({
-                                'id': f"{source['name']}_{link}",
-                                'title': title,
-                                'url': link,
-                                'source': source['name'],
-                                'market': source['market'],
-                                'timestamp': datetime.now(),
-                                'published_timestamp': pub_time.timestamp()
-                            })
-                            
-                        except Exception as e:
-                            logger.debug(f"RSS 항목 오류: {e}")
-                            continue
+                    age_hours = (datetime.now(self.kst) - pub_time).total_seconds() / 3600
+                    if age_hours > 24:
+                        continue
+                    
+                    if not self._passes_keyword_filter(title):
+                        continue
+                    
+                    self._register_news(title, link)
+                    
+                    items.append({
+                        'id': f"{source['name']}_{link}",
+                        'title': title,
+                        'url': link,
+                        'source': source['name'],
+                        'market': source['market'],
+                        'type': 'news',
+                        'timestamp': datetime.now(),
+                        'published_timestamp': pub_time.timestamp(),
+                        'published_time_kst': pub_time.strftime('%Y-%m-%d %H:%M:%S KST')
+                    })
+                    
+                except Exception as e:
+                    logger.debug(f"RSS 항목 오류: {e}")
+                    continue
             
             logger.info(f"✅ {source['name']}: {len(items)}개")
             return items
@@ -164,56 +155,57 @@ class NewsEngineV2_2:
             logger.error(f"{source['name']} RSS 오류: {e}")
             return items
     
-    async def _fetch_html(self, source):
-        """HTML 크롤링"""
+    async def _fetch_html(self, session, source):
+        """HTML 크롤링 (Golden Logic)"""
         items = []
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(source['url'], headers=headers, timeout=10) as resp:
-                    if resp.status != 200:
-                        return items
+            headers = {'Referer': 'https://www.google.com/'}
+            response = await session.get(source['url'], headers=headers, timeout=15)
+            
+            if response.status_code != 200:
+                logger.warning(f"{source['name']} HTML 실패: {response.status_code}")
+                return items
+            
+            soup = BeautifulSoup(response.text, 'lxml')
+            links = soup.find_all('a', href=re.compile(source['pattern']))
+            
+            for link_tag in links[:15]:
+                try:
+                    title = link_tag.get_text(strip=True)
+                    link = link_tag.get('href')
                     
-                    soup = BeautifulSoup(await resp.text(), 'html.parser')
+                    if not link.startswith('http'):
+                        if source['name'] == 'Business Wire':
+                            link = 'https://www.businesswire.com' + link
+                        elif source['name'] == 'Benzinga':
+                            link = 'https://www.benzinga.com' + link
                     
-                    for card in soup.select('.card-list .card')[:15]:
-                        try:
-                            a = card.select_one('h3 a') or card.find('a')
-                            if not a:
-                                continue
-                            
-                            title = a.get_text(strip=True)
-                            link = a['href']
-                            
-                            if not link.startswith('http'):
-                                link = source['base_url'] + link
-                            
-                            if self._is_duplicate(title, link):
-                                continue
-                            
-                            if not self._passes_keyword_filter(title):
-                                continue
-                            
-                            pub_time = datetime.now(self.kst)
-                            
-                            self._register_news(title, link)
-                            
-                            items.append({
-                                'id': f"{source['name']}_{link}",
-                                'title': title,
-                                'url': link,
-                                'source': source['name'],
-                                'market': source['market'],
-                                'timestamp': datetime.now(),
-                                'published_timestamp': pub_time.timestamp()
-                            })
-                            
-                        except Exception as e:
-                            logger.debug(f"HTML 카드 오류: {e}")
-                            continue
+                    if self._is_duplicate(title, link):
+                        continue
+                    
+                    if not self._passes_keyword_filter(title):
+                        continue
+                    
+                    pub_time = datetime.now(self.kst)
+                    
+                    self._register_news(title, link)
+                    
+                    items.append({
+                        'id': f"{source['name']}_{link}",
+                        'title': title,
+                        'url': link,
+                        'source': source['name'],
+                        'market': source['market'],
+                        'type': 'news',
+                        'timestamp': datetime.now(),
+                        'published_timestamp': pub_time.timestamp(),
+                        'published_time_kst': pub_time.strftime('%Y-%m-%d %H:%M:%S KST')
+                    })
+                    
+                except Exception as e:
+                    logger.debug(f"HTML 링크 오류: {e}")
+                    continue
             
             logger.info(f"✅ {source['name']}: {len(items)}개")
             return items
@@ -222,40 +214,113 @@ class NewsEngineV2_2:
             logger.error(f"{source['name']} HTML 오류: {e}")
             return items
     
-    def _extract_time(self, entry, source_name):
-        """시간 추출"""
+    async def _fetch_sec(self, session):
+        """SEC 8-K 공시 크롤링"""
+        items = []
+        
+        try:
+            headers = {'User-Agent': 'StockBot/3.0 (admin@stockbot.com)'}
+            response = await session.get(self.sec_url, headers=headers, timeout=20)
+            
+            if response.status_code != 200:
+                logger.warning(f"SEC 8-K 실패: {response.status_code}")
+                return items
+            
+            soup = BeautifulSoup(response.text, 'xml')
+            entries = soup.find_all('entry')
+            
+            for entry in entries[:30]:
+                try:
+                    title_tag = entry.find('title')
+                    link_tag = entry.find('link')
+                    updated_tag = entry.find('updated')
+                    
+                    if not title_tag or not link_tag:
+                        continue
+                    
+                    title = title_tag.text.strip()
+                    link = link_tag.get('href')
+                    
+                    title = f"[공시] {title}"
+                    
+                    if self._is_duplicate(title, link):
+                        continue
+                    
+                    pub_time = self._extract_sec_time(updated_tag)
+                    
+                    age_hours = (datetime.now(self.kst) - pub_time).total_seconds() / 3600
+                    if age_hours > 24:
+                        continue
+                    
+                    if not self._passes_keyword_filter(title):
+                        continue
+                    
+                    self._register_news(title, link)
+                    
+                    items.append({
+                        'id': f"SEC_{link}",
+                        'title': title,
+                        'url': link,
+                        'source': 'SEC 8-K',
+                        'market': 'US',
+                        'type': 'filing',
+                        'timestamp': datetime.now(),
+                        'published_timestamp': pub_time.timestamp(),
+                        'published_time_kst': pub_time.strftime('%Y-%m-%d %H:%M:%S KST')
+                    })
+                    
+                except Exception as e:
+                    logger.debug(f"SEC 항목 오류: {e}")
+                    continue
+            
+            logger.info(f"✅ SEC 8-K: {len(items)}개")
+            return items
+            
+        except Exception as e:
+            logger.error(f"SEC 8-K 오류: {e}")
+            return items
+    
+    def _extract_rss_time(self, entry):
+        """RSS 발간 시간 파싱 → KST"""
         try:
             if hasattr(entry, 'published_parsed') and entry.published_parsed:
                 t = entry.published_parsed
                 dt_naive = datetime(t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec)
-                dt_kst = dt_naive + timedelta(hours=9)  # UTC → KST
+                dt_kst = dt_naive + timedelta(hours=9)
                 return self.kst.localize(dt_kst)
             
-            if hasattr(entry, 'published'):
-                return self._parse_et(entry.published)
+            if hasattr(entry, 'updated_parsed') and entry.updated_parsed:
+                t = entry.updated_parsed
+                dt_naive = datetime(t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec)
+                dt_kst = dt_naive + timedelta(hours=9)
+                return self.kst.localize(dt_kst)
                 
         except Exception as e:
-            logger.debug(f"시간 추출 실패: {e}")
+            logger.debug(f"RSS 시간 파싱 실패: {e}")
         
         return datetime.now(self.kst)
     
-    def _parse_et(self, time_str):
-        """ET → KST 변환"""
+    def _extract_sec_time(self, updated_tag):
+        """SEC XML updated 시간 파싱 → KST"""
         try:
-            match = re.search(r'(\d{1,2}:\d{2})', time_str)
-            if match and any(tz in time_str for tz in ['ET', 'EST', 'EDT']):
-                h, m = map(int, match.group(1).split(':'))
-                now = datetime.now()
-                dt_naive = datetime(now.year, now.month, now.day, h, m)
-                dt_kst = dt_naive + timedelta(hours=14)
-                return self.kst.localize(dt_kst)
-        except:
-            pass
+            if updated_tag:
+                time_str = updated_tag.text.strip()
+                
+                if time_str.endswith('Z'):
+                    time_str = time_str.replace('Z', '+00:00')
+                
+                dt = datetime.fromisoformat(time_str)
+                dt_kst = dt.astimezone(self.kst)
+                
+                return dt_kst
+                
+        except Exception as e:
+            logger.debug(f"SEC 시간 파싱 실패: {e}")
         
         return datetime.now(self.kst)
     
     def _is_duplicate(self, title, url):
-        """중복 체크 (URL + 제목 유사도 85%)"""
+        """중복 체크"""
         if url in self.seen_urls:
             return True
         
@@ -274,7 +339,7 @@ class NewsEngineV2_2:
             self.seen_titles.pop(0)
     
     def _passes_keyword_filter(self, title):
-        """키워드 필터 (Config.POSITIVE/NEGATIVE)"""
+        """키워드 필터"""
         title_lower = title.lower()
         
         has_positive = any(kw in title_lower for kw in Config.POSITIVE_KEYWORDS)
@@ -283,24 +348,29 @@ class NewsEngineV2_2:
         return has_positive and not has_negative
     
     async def process_news(self, news_item):
-        """
-        뉴스 처리 파이프라인
-        종목 없어도 OK → AI가 수혜주 찾기
-        """
+        """뉴스 처리 파이프라인 (SEC 공시 최적화)"""
         try:
-            # 1차: 빠른 점수
-            is_promising = await self.ai.quick_score(news_item['title'], threshold=8.0)
+            is_filing = news_item.get('type') == 'filing'
+            
+            threshold = 7.5 if is_filing else 8.0
+            is_promising = await self.ai.quick_score(news_item['title'], threshold=threshold)
             
             if not is_promising:
                 return None
             
-            # 2차: 상세 분석
             analysis = await self.ai.analyze_news_signal(news_item)
             
-            if not analysis or analysis['score'] < 8.5:
+            if not analysis:
                 return None
             
-            # 3중 검증
+            if is_filing and analysis['score'] < 9.5:
+                analysis['score'] = min(analysis['score'] + 0.5, 10.0)
+                logger.info(f"📋 공시 점수 보정: {analysis['score']}")
+            
+            min_score = 8.0 if is_filing else 8.5
+            if analysis['score'] < min_score:
+                return None
+            
             verified = await self.verify_signals(analysis, news_item)
             
             if not verified:
@@ -311,6 +381,8 @@ class NewsEngineV2_2:
                 'analysis': analysis,
                 'verified': True,
                 'verification_details': verified,
+                'model_used': analysis.get('model_used', 'unknown'),
+                'is_filing': is_filing,
                 'timestamp': datetime.now()
             }
             
@@ -319,14 +391,13 @@ class NewsEngineV2_2:
             return None
     
     async def verify_signals(self, analysis, news_item):
-        """3중 검증 (승률 80%)"""
+        """3중 검증"""
         verification = {
             'ai_score': analysis['score'],
             'checks_passed': [],
             'total_score': 0
         }
         
-        # 1차: AI 점수
         if analysis['score'] >= 9.0:
             verification['total_score'] += 50
             verification['checks_passed'].append('AI 초고점수')
@@ -336,16 +407,17 @@ class NewsEngineV2_2:
         else:
             return None
         
-        # 확실성
         if analysis.get('certainty') == 'confirmed':
             verification['total_score'] += 15
             verification['checks_passed'].append('확정 뉴스')
         
-        # 2차: 시장 반응
+        if news_item.get('type') == 'filing':
+            verification['total_score'] += 10
+            verification['checks_passed'].append('SEC 공식 공시')
+        
         verification['total_score'] += 10
         verification['checks_passed'].append('시장 분석')
         
-        # 3차: 뉴스 타입
         news_type = self._classify_news_type(news_item['title'])
         pattern_score = {
             'approval': 25,
@@ -359,7 +431,6 @@ class NewsEngineV2_2:
         verification['total_score'] += pattern_score
         verification['checks_passed'].append(f'타입: {news_type}')
         
-        # 최종: 80점 이상
         if verification['total_score'] >= 80:
             return verification
         else:

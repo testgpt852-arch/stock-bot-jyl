@@ -1,4 +1,4 @@
-# 조기경보 시스템 v2.2 - Requirements
+# 조기경보 시스템 v2.2 (v3.0 업그레이드) - Requirements
 
 # Telegram
 python-telegram-bot==21.0
@@ -8,15 +8,15 @@ telegram==0.0.1
 google-genai==0.2.2
 
 # 데이터 수집
-aiohttp==3.9.0
+curl-cffi==0.7.0  # 🆕 보안 사이트 우회 (Business Wire, Benzinga, SEC)
 beautifulsoup4==4.12.0
 feedparser==6.0.11
 yfinance==0.2.52
+lxml==5.1.0
 
 # 유틸리티
 python-dotenv==1.0.0
 pytz==2024.1
-lxml==5.1.0
 
 # 선택 (현재 미사용)
 # finnhub-python
