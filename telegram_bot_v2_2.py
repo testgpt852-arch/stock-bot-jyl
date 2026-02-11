@@ -44,7 +44,7 @@ class TelegramBotV2_2:
     async def start(self):
         """봇 시작"""
         try:
-            self.app = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
+            self.app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
             
             # 명령어
             self.app.add_handler(CommandHandler("start", self.cmd_start))
