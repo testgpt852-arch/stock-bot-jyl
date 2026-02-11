@@ -17,7 +17,7 @@ import pytz
 from difflib import SequenceMatcher
 import re
 
-from ai_brain_v2 import AIBrainV2_2
+from ai_brain_v2_2 import AIBrainV2_2
 from config import Config
 
 logger = logging.getLogger(__name__)
