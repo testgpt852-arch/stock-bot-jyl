@@ -43,12 +43,14 @@ class TelegramBotV2_2:
     async def start(self):
         """봇 시작"""
         try:
-            self.app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
+            self.app = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
             
             # 명령어
             self.app.add_handler(CommandHandler("start", self.cmd_start))
             self.app.add_handler(CommandHandler("analyze", self.cmd_analyze))
             self.app.add_handler(CommandHandler("report", self.cmd_report))
+            self.app.add_handler(CommandHandler("status", self.cmd_status))  # 🆕
+            self.app.add_handler(CommandHandler("news", self.cmd_news))      # 🆕
             self.app.add_handler(CommandHandler("help", self.cmd_help))
             
             await self.app.initialize()
@@ -90,24 +92,144 @@ class TelegramBotV2_2:
             "🐋 고래 지분 공시\n"
             "🔮 아침/저녁 리포트\n\n"
             "**명령어:**\n"
-            "/analyze 삼성전자 - 즉시 분석\n"
+            "/analyze 삼성전자 - 종목 분석\n"
             "/report - 즉시 리포트\n"
+            "/status - 시스템 상태 🆕\n"
+            "/news - 최근 뉴스 조회 🆕\n"
             "/help - 도움말"
         )
     
     async def cmd_analyze(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """종목 분석"""
         if not context.args:
-            await update.message.reply_text("사용법: /analyze 삼성전자")
+            await update.message.reply_text(
+                "**사용법:**\n"
+                "/analyze 삼성전자\n"
+                "/analyze AAPL\n"
+                "/analyze 005930 (종목코드)"
+            )
             return
         
         ticker = ' '.join(context.args)
-        await update.message.reply_text(f"🔍 {ticker} 분석 중...")
+        await update.message.reply_text(f"🔍 **{ticker}** 분석 중...")
         
-        await update.message.reply_text(
-            f"📊 {ticker}\n"
-            f"분석 기능 구현 예정"
-        )
+        try:
+            import yfinance as yf
+            
+            # 종목 코드 매핑 (간단 버전)
+            ticker_map = {
+                '삼성전자': '005930.KS',
+                'sk하이닉스': '000660.KS',
+                '현대차': '005380.KS',
+                'lg화학': '051910.KS',
+                'naver': '035420.KS',
+                '카카오': '035720.KS',
+            }
+            
+            # 티커 변환
+            search_ticker = ticker.lower()
+            if search_ticker in ticker_map:
+                symbol = ticker_map[search_ticker]
+            elif ticker.isdigit():
+                symbol = f"{ticker}.KS"
+            else:
+                symbol = ticker.upper()
+            
+            # yfinance로 데이터 가져오기
+            stock = yf.Ticker(symbol)
+            info = stock.info
+            hist = stock.history(period='5d')
+            
+            if hist.empty:
+                await update.message.reply_text(
+                    f"⚠️ **{ticker}** 데이터를 찾을 수 없습니다.\n\n"
+                    f"시도한 심볼: `{symbol}`\n\n"
+                    f"다시 시도해보세요:\n"
+                    f"• 한글: 삼성전자\n"
+                    f"• 코드: 005930\n"
+                    f"• 미국: AAPL"
+                )
+                return
+            
+            # 현재가 및 변동률
+            current_price = hist['Close'].iloc[-1]
+            prev_price = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
+            change = current_price - prev_price
+            change_pct = (change / prev_price) * 100
+            
+            volume = hist['Volume'].iloc[-1]
+            avg_volume = hist['Volume'].mean()
+            volume_ratio = volume / avg_volume if avg_volume > 0 else 1
+            
+            # AI 분석 요청
+            stock_data = {
+                'name': info.get('longName', ticker),
+                'symbol': symbol,
+                'price': current_price,
+                'change_percent': change_pct,
+                'volume': volume,
+                'volume_ratio': volume_ratio,
+                'title': f"{ticker} 실시간 분석"
+            }
+            
+            analysis = await self.ai.analyze_stock_manual(stock_data)
+            
+            if not analysis:
+                await update.message.reply_text("⚠️ AI 분석 실패")
+                return
+            
+            # 결과 메시지
+            score = analysis.get('score', 0)
+            recommendation = analysis.get('recommendation', 'Hold')
+            
+            # 이모지
+            rec_emoji = {
+                'Strong Buy': '🚀',
+                'Buy': '✅',
+                'Hold': '⏸️',
+                'Sell': '⚠️',
+                'Strong Sell': '🚨'
+            }.get(recommendation, '📊')
+            
+            msg = f"📊 **{ticker} 분석 결과**\n\n"
+            msg += f"**현재가**: {current_price:,.2f} ({change:+.2f}, {change_pct:+.2f}%)\n"
+            msg += f"**거래량**: {volume:,.0f} (평균 대비 {volume_ratio:.1f}배)\n\n"
+            
+            msg += f"**🤖 AI 분석** (모델: `{analysis.get('model_used', 'unknown')}`)\n"
+            msg += f"**점수**: {score}/10\n"
+            msg += f"**추천**: {rec_emoji} {recommendation}\n\n"
+            
+            msg += f"**요약**\n{analysis.get('summary', 'N/A')}\n\n"
+            
+            if analysis.get('reasoning'):
+                msg += f"**분석 근거**\n{analysis['reasoning']}\n\n"
+            
+            if analysis.get('entry_price'):
+                msg += f"**진입가**: {analysis['entry_price']:,.2f}\n"
+            if analysis.get('target_price'):
+                msg += f"**목표가**: {analysis['target_price']:,.2f}\n"
+            if analysis.get('stop_loss'):
+                msg += f"**손절가**: {analysis['stop_loss']:,.2f}\n\n"
+            
+            risk_emoji = {
+                'Low': '🟢',
+                'Medium': '🟡',
+                'High': '🔴',
+                'Unknown': '⚪'
+            }.get(analysis.get('risk_level', 'Unknown'), '⚪')
+            
+            msg += f"**리스크**: {risk_emoji} {analysis.get('risk_level', 'Unknown')}\n"
+            msg += f"\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            await update.message.reply_text(msg)
+            
+        except Exception as e:
+            logger.error(f"/analyze 오류: {e}", exc_info=True)
+            await update.message.reply_text(
+                f"⚠️ **분석 중 오류 발생**\n\n"
+                f"```\n{str(e)}\n```\n\n"
+                f"다시 시도하거나 다른 종목을 입력해주세요."
+            )
     
     async def cmd_report(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """즉시 리포트"""
@@ -126,24 +248,111 @@ class TelegramBotV2_2:
             logger.error(f"리포트 생성 오류: {e}")
             await update.message.reply_text(f"⚠️ 리포트 생성 실패: {str(e)}")
     
+    async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """🆕 시스템 상태"""
+        try:
+            msg = "🤖 **시스템 상태**\n\n"
+            
+            # AI 엔진
+            msg += "**AI Brain**\n"
+            msg += f"✅ 스캐너 모델: {', '.join(self.ai.scanner_models[:2])}\n"
+            msg += f"✅ 리포트 모델: {self.ai.report_models[0]}\n\n"
+            
+            # 뉴스 엔진
+            msg += "**News Engine**\n"
+            msg += f"✅ 소스: {len(self.news_engine.sources)}개 + SEC 8-K\n"
+            msg += f"✅ 중복 체크: {len(self.news_engine.seen_urls)}개 URL\n\n"
+            
+            # 모멘텀 트래커
+            msg += "**Momentum Tracker**\n"
+            msg += f"✅ 한국 관심종목: {len(self.momentum.kr_watchlist)}개\n"
+            msg += f"✅ 미국 관심종목: {len(self.momentum.us_watchlist)}개\n\n"
+            
+            # 백그라운드 작업
+            msg += "**백그라운드 작업**\n"
+            msg += f"✅ 뉴스 모니터: 30초 주기\n"
+            msg += f"✅ 급등 감지: 5분 주기\n"
+            msg += f"✅ 리포트: 07:30, 23:00\n\n"
+            
+            msg += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            await update.message.reply_text(msg)
+            
+        except Exception as e:
+            logger.error(f"/status 오류: {e}")
+            await update.message.reply_text(f"⚠️ 상태 조회 실패: {str(e)}")
+    
+    async def cmd_news(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """🆕 최근 뉴스 조회"""
+        try:
+            await update.message.reply_text("📰 최근 뉴스 조회 중...")
+            
+            # 최근 뉴스 스캔
+            news_list = await self.news_engine.scan_all_sources()
+            
+            if not news_list:
+                await update.message.reply_text("📭 최근 뉴스가 없습니다.")
+                return
+            
+            # 상위 5개만
+            top_news = news_list[:5]
+            
+            msg = f"📰 **최근 뉴스 TOP 5**\n\n"
+            
+            for i, news in enumerate(top_news, 1):
+                is_filing = news.get('type') == 'filing'
+                emoji = "📋" if is_filing else "📰"
+                
+                msg += f"{i}. {emoji} **{news['title'][:60]}...**\n"
+                msg += f"   출처: {news['source']}\n"
+                
+                if news.get('published_time_kst'):
+                    msg += f"   시간: {news['published_time_kst']}\n"
+                
+                if news.get('url'):
+                    msg += f"   [링크]({news['url']})\n"
+                
+                msg += "\n"
+            
+            msg += "💡 **Tip**: AI 분석은 자동으로 진행됩니다."
+            
+            await update.message.reply_text(msg)
+            
+        except Exception as e:
+            logger.error(f"/news 오류: {e}")
+            await update.message.reply_text(f"⚠️ 뉴스 조회 실패: {str(e)}")
+    
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """도움말"""
         await update.message.reply_text(
-            "📚 조기경보 시스템 v2.2 (v3.0 업그레이드)\n\n"
-            "**자동 알림:**\n"
-            "07:30 - 한국장 오전 브리핑\n"
-            "23:00 - 미국장 저녁 브리핑\n"
-            "장중 - 실시간 뉴스 (30초)\n"
-            "장중 - 급등 감지 (5분)\n\n"
-            "**데이터 소스:**\n"
-            "뉴스: PR, Globe, Business Wire, Benzinga\n"
-            "공시: SEC 8-K (단타 최상위) 🆕\n"
-            "시장: 프로그램 매매, 테마주\n\n"
-            "**AI 모델:**\n"
-            "Gemma 3-27B (무제한 쿼터)\n"
-            "Gemini 3 Flash (고성능)\n"
-            "3단계 fallback\n\n"
-            "🎯 승률 85% 목표"
+            "📚 **조기경보 시스템 v2.2 (v3.0 업그레이드)**\n\n"
+            "**📱 명령어:**\n"
+            "• `/start` - 봇 시작\n"
+            "• `/analyze 삼성전자` - 종목 분석\n"
+            "• `/report` - 즉시 리포트\n"
+            "• `/status` - 시스템 상태 🆕\n"
+            "• `/news` - 최근 뉴스 TOP 5 🆕\n"
+            "• `/help` - 이 도움말\n\n"
+            "**⏰ 자동 알림:**\n"
+            "• 07:30 - 한국장 오전 브리핑\n"
+            "• 23:00 - 미국장 저녁 브리핑\n"
+            "• 장중 - 실시간 뉴스 (30초)\n"
+            "• 장중 - 급등 감지 (5분)\n\n"
+            "**📊 데이터 소스:**\n"
+            "• 뉴스: PR, Globe, Business Wire, Benzinga\n"
+            "• 공시: SEC 8-K (단타 최상위) 🔥\n"
+            "• 시장: 프로그램 매매, 테마주\n\n"
+            "**🤖 AI 모델:**\n"
+            "• Gemma 3-27B (무제한 쿼터)\n"
+            "• Gemini 3 Flash (고성능)\n"
+            "• 3단계 fallback\n\n"
+            "**💡 사용 예시:**\n"
+            "```\n"
+            "/analyze 삼성전자\n"
+            "/analyze AAPL\n"
+            "/analyze 005930\n"
+            "```\n\n"
+            "🎯 승률 85% 목표!"
         )
     
     async def schedule_reports(self):
@@ -365,7 +574,7 @@ class TelegramBotV2_2:
             await self.app.bot.send_message(
                 chat_id=self.chat_id,
                 text=text,
-                parse_mode=None
+                parse_mode='Markdown'
             )
         except Exception as e:
             logger.error(f"메시지 전송 실패: {e}")
