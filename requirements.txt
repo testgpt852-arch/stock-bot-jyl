@@ -9,6 +9,7 @@ google-genai==0.2.2
 
 # 데이터 수집
 curl-cffi==0.7.0  # 🆕 보안 사이트 우회 (Business Wire, Benzinga, SEC)
+aiohttp==3.9.3        # ⚠️ 모멘텀/프레딕터 엔진에서 사용 중
 beautifulsoup4==4.12.0
 feedparser==6.0.11
 yfinance==0.2.52
@@ -17,6 +18,7 @@ lxml==5.1.0
 # 유틸리티
 python-dotenv==1.0.0
 pytz==2024.1
+python-dateutil==2.8.2  # 🆕 SEC 공시 시간 파싱용
 
 # 선택 (현재 미사용)
 # finnhub-python
