@@ -199,6 +199,19 @@ class PredictorEngineV2_2:
                                 confidence = 0.70
                                 expected_impact = '+10~25%'
                                 reason = '📜 대규모 계약'
+                            
+                            # 🔥 [추가된 로직] 실적 대박 공시 (매출액/손익구조 변동)
+                            elif '매출액' in report_nm or '손익구조' in report_nm:
+                                signal_type = 'earnings_surprise'
+                                confidence = 0.85
+                                expected_impact = '+15~30%'
+                                reason = '💰 실적 대박 (손익구조 변동)'
+                            elif '잠정실적' in report_nm:
+                                signal_type = 'earnings_provisional'
+                                confidence = 0.80
+                                expected_impact = '+10~20%'
+                                reason = '📊 잠정 실적 발표'
+                                
                             elif '주식교환' in report_nm or '합병' in report_nm:
                                 signal_type = 'merger'
                                 confidence = 0.85
