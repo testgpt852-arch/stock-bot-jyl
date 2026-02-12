@@ -25,6 +25,9 @@ class TelegramBotV2_2:
         self.app = None
         self.chat_id = Config.TELEGRAM_CHAT_ID
         
+        # 🆕 실시간 공시 중복 방지
+        self.seen_filings = set()
+        
         # 엔진 초기화
         try:
             self.ai = AIBrainV2_2()
@@ -38,7 +41,7 @@ class TelegramBotV2_2:
             logger.error(f"❌ 엔진 초기화 실패: {e}")
             raise
         
-        logger.info("🤖 Telegram Bot v2.2 (v3.0 업그레이드) 초기화")
+        logger.info("🤖 Telegram Bot v2.2 (v3.0 업그레이드 + 실시간 공시) 초기화")
     
     async def start(self):
         """봇 시작"""
@@ -60,19 +63,24 @@ class TelegramBotV2_2:
             asyncio.create_task(self.schedule_reports())
             asyncio.create_task(self.news_monitor())
             asyncio.create_task(self.momentum_monitor())
+            asyncio.create_task(self.filing_monitor_kr())   # 🆕 한국 공시 실시간
+            asyncio.create_task(self.filing_monitor_us())   # 🆕 미국 공시 실시간
             
             logger.info("✅ 봇 시작")
             
             await self.send_message(
-                "🚀 조기경보 시스템 v2.2 (v3.0 업그레이드) 시작!\n\n"
+                "🚀 조기경보 시스템 v2.2 (실시간 공시 모니터링) 시작!\n\n"
                 "✅ AI Brain v2.2 (3개 모델)\n"
-                "✅ News Engine v2.2 (5대장 + SEC 8-K) 🆕\n"
+                "✅ News Engine v2.2 (5대장 + SEC 8-K)\n"
                 "✅ Momentum Tracker v2.2\n"
-                "✅ Predictor Engine v2.2 (고래 추적)\n\n"
-                "🔥 curl_cffi 적용 (보안 우회)\n"
-                "🔥 SEC 공시 추가 (단타 최상위)\n"
-                "🔥 AI 모델명 표시\n\n"
-                "승률 85% 목표!"
+                "✅ Predictor Engine v2.2 (고래 추적)\n"
+                "✅ 실시간 공시 모니터 🆕\n\n"
+                "📊 실시간 감시 중:\n"
+                "• 뉴스: 30초 주기\n"
+                "• 급등: 5분 주기\n"
+                "• 한국 공시: 5분 주기 🔥\n"
+                "• 미국 공시: 10분 주기 🔥\n\n"
+                "🎯 선취매 전략 완성!"
             )
             
         except Exception as e:
@@ -563,6 +571,113 @@ class TelegramBotV2_2:
             msg += f"원인: {signal['reason']}\n"
         
         msg += f"\n⏰ {signal['timestamp'].strftime('%H:%M:%S')}"
+        
+        return msg
+    
+    async def filing_monitor_kr(self):
+        """🆕 한국 공시 실시간 모니터 (5분)"""
+        logger.info("📋 한국 공시 실시간 모니터 시작")
+        
+        while True:
+            try:
+                # DART 공시 스캔 (최근 1일)
+                signals = await self.predictor.scan_dart_filings(days=1)
+                
+                for signal in signals:
+                    # 중복 체크
+                    filing_id = signal.get('filing_id', '')
+                    signal_id = f"KR_{signal.get('ticker', 'UNKNOWN')}_{filing_id}"
+                    
+                    if signal_id in self.seen_filings:
+                        continue
+                    
+                    self.seen_filings.add(signal_id)
+                    
+                    # 즉시 알림!
+                    message = self._format_filing_alert(signal)
+                    await self.send_message(message)
+                    
+                    logger.info(f"🔔 한국 공시 알림: {signal.get('name')}")
+                
+                # 메모리 정리
+                if len(self.seen_filings) > 1000:
+                    self.seen_filings = set(list(self.seen_filings)[-500:])
+                
+                await asyncio.sleep(300)  # 5분
+                
+            except Exception as e:
+                logger.error(f"한국 공시 모니터 오류: {e}")
+                await asyncio.sleep(300)
+    
+    async def filing_monitor_us(self):
+        """🆕 미국 공시 실시간 모니터 (10분)"""
+        logger.info("📋 미국 공시 실시간 모니터 시작")
+        
+        while True:
+            try:
+                # Form 4 (내부자)
+                form4_signals = await self.predictor.scan_sec_form4(hours=2)
+                for signal in form4_signals:
+                    filing_id = signal.get('filing_id', '')
+                    signal_id = f"US_F4_{signal.get('ticker')}_{filing_id}"
+                    
+                    if signal_id not in self.seen_filings:
+                        self.seen_filings.add(signal_id)
+                        message = self._format_filing_alert(signal)
+                        await self.send_message(message)
+                        logger.info(f"🔔 Form 4 알림: {signal.get('name')}")
+                
+                # 13D/13G (고래)
+                whale_signals = await self.predictor.scan_sec_13d(hours=2)
+                for signal in whale_signals:
+                    filing_id = signal.get('filing_id', '')
+                    signal_id = f"US_13D_{signal.get('ticker')}_{filing_id}"
+                    
+                    if signal_id not in self.seen_filings:
+                        self.seen_filings.add(signal_id)
+                        message = self._format_filing_alert(signal)
+                        await self.send_message(message)
+                        logger.info(f"🔔 13D/13G 알림: {signal.get('name')}")
+                
+                # 메모리 정리
+                if len(self.seen_filings) > 1000:
+                    self.seen_filings = set(list(self.seen_filings)[-500:])
+                
+                await asyncio.sleep(600)  # 10분
+                
+            except Exception as e:
+                logger.error(f"미국 공시 모니터 오류: {e}")
+                await asyncio.sleep(600)
+    
+    def _format_filing_alert(self, signal):
+        """🆕 공시 알림 포맷"""
+        market = '🇰🇷' if signal.get('market') == 'KR' else '🇺🇸'
+        
+        # 시그널 타입별 이모지
+        type_emoji = {
+            'insider_buy': '👔',
+            'ownership_increase': '🐋',
+            'whale_alert': '🐳',
+            'contract': '📝',
+            '3rd_party_allocation': '🚀',
+            'ownership_change': '👑',
+            'tender_offer': '💰'
+        }.get(signal.get('signal_type'), '📊')
+        
+        confidence = int(signal.get('confidence', 0.5) * 100)
+        
+        msg = f"{type_emoji} [실시간 공시] {market}\n\n"
+        msg += f"{signal.get('name')} ({signal.get('ticker')})\n"
+        msg += f"신호: {signal.get('reason')}\n"
+        msg += f"신뢰도: {confidence}%\n"
+        msg += f"예상: {signal.get('expected_impact')}\n"
+        
+        # 공시 링크
+        filing_url = signal.get('details', {}).get('filing_url')
+        if filing_url:
+            msg += f"\n원문: {filing_url}\n"
+        
+        msg += f"\n⏰ {datetime.now().strftime('%H:%M:%S')}"
         
         return msg
     
