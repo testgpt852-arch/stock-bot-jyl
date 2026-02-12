@@ -2,7 +2,7 @@
 """
 AI Brain v2.2 - 완전체
 - 다중 모델 fallback (3개)
-- Gemma JSON 버그 대응
+- Gemma JSON 버그 대응 (정밀 파싱 적용)
 - 종목 없이 수혜주 찾기
 """
 
@@ -45,6 +45,34 @@ class AIBrainV2_2:
         }
         
         logger.info("🤖 AI Brain v2.2 초기화")
+
+    def _parse_json_safely(self, text):
+        """
+        [NEW] AI 응답에서 JSON 데이터만 정밀하게 추출하는 수술 도구
+        - 마크다운 제거
+        - 앞뒤 사족(Extra data) 제거
+        """
+        try:
+            if not text:
+                return None
+
+            # 1. 마크다운 코드 블록 제거
+            text = re.sub(r'```json\s*', '', text)
+            text = re.sub(r'```\s*', '', text)
+            
+            # 2. 가장 처음 '{' 와 가장 마지막 '}' 찾기 (핵심 로직)
+            start_idx = text.find('{')
+            end_idx = text.rfind('}')
+            
+            if start_idx == -1 or end_idx == -1:
+                return None # JSON 구조가 없음
+            
+            # 3. 정확히 JSON 구간만 잘라냄
+            json_str = text[start_idx : end_idx + 1]
+            
+            return json.loads(json_str)
+        except Exception:
+            return None
     
     async def quick_score(self, title, threshold=8.0):
         """
@@ -80,23 +108,13 @@ class AIBrainV2_2:
                     config=config
                 )
                 
-                text = response.text
+                # 🔥 [수정] 정밀 파싱 함수 적용
+                result = self._parse_json_safely(response.text)
                 
-                # 1. 마크다운 제거
-                if '```' in text:
-                    text = re.sub(r'```json|```', '', text).strip()
+                if not result:
+                    continue # 파싱 실패 시 다음 모델로
                 
-                # 2. 강제 JSON 추출 (가장 확실한 방법)
-                # 첫 번째 '{'와 마지막 '}' 사이만 잘라냅니다.
-                start_idx = text.find('{')
-                end_idx = text.rfind('}')
-                
-                if start_idx != -1 and end_idx != -1:
-                    text = text[start_idx : end_idx + 1]
-                
-                result = json.loads(text)
                 score = result.get('score', 0)
-                
                 return score >= threshold
                 
             except Exception as e:
@@ -163,14 +181,14 @@ class AIBrainV2_2:
                     config=config
                 )
                 
-                text = response.text
+                # 🔥 [수정] 정밀 파싱 함수 적용
+                result = self._parse_json_safely(response.text)
                 
-                if is_gemma or '```' in text:
-                    text = re.sub(r'```json\n|```', '', text).strip()
-                
-                result = json.loads(text)
+                if not result:
+                    logger.warning(f"[{model}] JSON 파싱 실패 (내용 없음)")
+                    continue
+
                 result['model_used'] = model
-                
                 return result
                 
             except Exception as e:
@@ -224,14 +242,13 @@ class AIBrainV2_2:
                     config=config
                 )
                 
-                text = response.text
+                # 🔥 [수정] 정밀 파싱 함수 적용
+                result = self._parse_json_safely(response.text)
                 
-                if is_gemma or '```' in text:
-                    text = re.sub(r'```json\n|```', '', text).strip()
-                
-                result = json.loads(text)
+                if not result:
+                    continue
+
                 result['model_used'] = model
-                
                 return result
                 
             except Exception as e:
