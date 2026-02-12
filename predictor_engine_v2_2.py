@@ -286,6 +286,8 @@ class PredictorEngineV2_2:
                                 'confidence': confidence,
                                 'expected_impact': expected_impact,
                                 'reason': f"{whale_name}\n{reason}" if whale_name else reason,
+                                'filing_id': rcept_no,  # 🆕 중복 체크용
+                                'market': 'KR',  # 🆕 시장 구분
                                 'details': {
                                     'report_name': report_nm,
                                     'filing_url': filing_url,
@@ -373,6 +375,8 @@ class PredictorEngineV2_2:
                                 'confidence': 0.80,
                                 'expected_impact': '+10~30%',
                                 'reason': '👔 임원 매수 (Form 4)',
+                                'filing_id': link,  # 🆕 중복 체크용
+                                'market': 'US',  # 🆕 시장 구분
                                 'details': {
                                     'filing_url': link,
                                     'transaction_type': transaction_type
@@ -498,6 +502,8 @@ class PredictorEngineV2_2:
                                 'confidence': 0.85,
                                 'expected_impact': '+15~50%',
                                 'reason': trigger_msg,
+                                'filing_id': link,  # 🆕 중복 체크용
+                                'market': 'US',  # 🆕 시장 구분
                                 'details': {
                                     'filing_url': link,
                                     'whale_name': whale_name,
@@ -659,27 +665,40 @@ class PredictorEngineV2_2:
         return risks
     
     def _deduplicate_and_rank(self, signals):
-        """중복 제거 & 순위"""
-        ticker_map = {}
+        """
+        중복 제거 & 순위 - 수정 (제미나이 검증)
+        
+        핵심: "회사 이름이 다르면 다른 놈이다!"
+        - UNKNOWN 티커도 회사명으로 구분
+        - 진짜 같은 회사의 여러 공시만 합침
+        """
+        unique_map = {}
         
         for signal in signals:
-            ticker = signal['ticker']
+            ticker = signal.get('ticker', 'UNKNOWN')
+            name = signal.get('name', 'Unknown')
+            filing_id = signal.get('filing_id', '')
             
-            if ticker not in ticker_map:
-                ticker_map[ticker] = signal
-                ticker_map[ticker]['signals'] = [signal['signal_type']]
+            # 🔥 핵심 로직: UNKNOWN이면 회사명으로 구분!
+            if ticker == 'UNKNOWN' or not ticker:
+                unique_key = f"UNKNOWN_{name}"
             else:
-                ticker_map[ticker]['signals'].append(signal['signal_type'])
-                ticker_map[ticker]['confidence'] = min(
-                    ticker_map[ticker]['confidence'] + 0.1,
-                    0.95
-                )
-                ticker_map[ticker]['reason'] += f" | {signal['reason']}"
+                unique_key = ticker
+            
+            # 고유 ID = unique_key + filing_id
+            # (같은 회사의 서로 다른 공시는 분리)
+            signal_id = f"{unique_key}_{filing_id}"
+            
+            # 진짜 중복(=같은 공시)만 제외
+            if signal_id not in unique_map:
+                unique_map[signal_id] = signal
+            # 같은 signal_id면 건너뜀 (이미 추가됨)
         
+        # 신뢰도 순 정렬
         ranked = sorted(
-            ticker_map.values(),
-            key=lambda x: x['confidence'],
+            unique_map.values(),
+            key=lambda x: x.get('confidence', 0),
             reverse=True
         )
         
-        return ranked[:10]
+        return ranked[:10]  # TOP 10
