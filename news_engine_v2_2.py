@@ -156,18 +156,71 @@ class NewsEngineV2_2:  # 🔥 클래스명 v2_2 유지!
             return items
     
     async def _fetch_html(self, session, source):
-        """HTML 크롤링 (Golden Logic)"""
+        """HTML 크롤링 (Golden Logic + Business Wire Fix)"""
         items = []
+        import random  # 캐시 버스팅용
         
         try:
+            # 1. 캐시 버스팅 (CDN 지연 해결)
+            cache_buster = f"?t={int(datetime.now().timestamp())}_{random.randint(1, 1000)}"
+            target_url = source['url'] + cache_buster
+            
             headers = {'Referer': 'https://www.google.com/'}
-            response = await session.get(source['url'], headers=headers, timeout=15)
+            # Timeout을 30초로 늘림
+            response = await session.get(target_url, headers=headers, timeout=30)
             
             if response.status_code != 200:
                 logger.warning(f"{source['name']} HTML 실패: {response.status_code}")
                 return items
             
             soup = BeautifulSoup(response.text, 'lxml')
+            
+            # 2. Business Wire 특별 처리 (시간 파싱)
+            if source['name'] == 'Business Wire':
+                news_items = soup.select('ul.bw-news-list > li')
+                for item in news_items[:15]:
+                    try:
+                        link_tag = item.find('a', href=re.compile(source['pattern']))
+                        if not link_tag: continue
+                        
+                        title = link_tag.get_text(strip=True)
+                        link = link_tag.get('href')
+                        
+                        # 링크 보정
+                        if not link.startswith('http'):
+                            link = 'https://www.businesswire.com' + link
+                        
+                        # 시간 파싱 (<time datetime="...">)
+                        time_tag = item.find('time')
+                        if time_tag and time_tag.get('datetime'):
+                            dt = datetime.fromisoformat(time_tag['datetime'])
+                            pub_time = dt.astimezone(self.kst)
+                        else:
+                            pub_time = datetime.now(self.kst)
+                        
+                        if self._is_duplicate(title, link): continue
+                        if not self._passes_keyword_filter(title): continue
+                        
+                        self._register_news(title, link)
+                        
+                        items.append({
+                            'id': f"{source['name']}_{link}",
+                            'title': title,
+                            'url': link,
+                            'source': source['name'],
+                            'market': source['market'],
+                            'type': 'news',
+                            'timestamp': datetime.now(),
+                            'published_timestamp': pub_time.timestamp(),
+                            'published_time_kst': pub_time.strftime('%Y-%m-%d %H:%M:%S KST')
+                        })
+                    except Exception:
+                        continue
+                
+                logger.info(f"✅ {source['name']}: {len(items)}개")
+                return items
+
+            # 3. Benzinga 및 기타 일반 HTML 처리 (기존 로직 유지)
             links = soup.find_all('a', href=re.compile(source['pattern']))
             
             for link_tag in links[:15]:
@@ -176,9 +229,7 @@ class NewsEngineV2_2:  # 🔥 클래스명 v2_2 유지!
                     link = link_tag.get('href')
                     
                     if not link.startswith('http'):
-                        if source['name'] == 'Business Wire':
-                            link = 'https://www.businesswire.com' + link
-                        elif source['name'] == 'Benzinga':
+                        if source['name'] == 'Benzinga':
                             link = 'https://www.benzinga.com' + link
                     
                     if self._is_duplicate(title, link):
@@ -442,9 +493,9 @@ class NewsEngineV2_2:  # 🔥 클래스명 v2_2 유지!
         
         keywords = {
             'approval': ['승인', 'approval', 'approved', 'fda'],
-            'earnings': ['실적', 'earnings', '영업이익'],
+            'earnings': ['실적', 'earnings', '영업이익'],\
             'contract': ['계약', 'contract', '수주'],
-            'government': ['정부', 'government', 'subsidy'],
+            'government': ['정부', 'government', 'subsidy'],\
             'product': ['출시', 'launch', 'product'],
         }
         
