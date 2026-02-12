@@ -136,7 +136,7 @@ class PredictorEngineV2_2:
         return report
     
     async def scan_dart_filings(self, days=3):
-        """한국 DART 공시 (기존 검증됨)"""
+        """한국 DART 공시 (기존 검증됨 + 급등주 로직 강화)"""
         signals = []
         
         if not self.dart_api_key or len(self.dart_api_key) < 10:
@@ -200,7 +200,7 @@ class PredictorEngineV2_2:
                                 expected_impact = '+10~25%'
                                 reason = '📜 대규모 계약'
                             
-                            # 🔥 [추가된 로직] 실적 대박 공시 (매출액/손익구조 변동)
+                            # 🔥 [NEW] 실적 대박 공시 (에스코넥/뉴인텍 사례)
                             elif '매출액' in report_nm or '손익구조' in report_nm:
                                 signal_type = 'earnings_surprise'
                                 confidence = 0.85
@@ -227,10 +227,29 @@ class PredictorEngineV2_2:
                                 confidence = 0.90
                                 expected_impact = '+25~60%'
                                 reason = '💰 공개매수'
+                            
+                            # 🔥 [NEW] 유상증자 정밀 분석 (케이바이오 사례)
                             elif '유상증자' in report_nm:
-                                signal_type = 'dilution'
-                                is_negative = True
-                                reason = '⚠️ 유상증자 (주가 희석)'
+                                if '제3자배정' in report_nm or '3자배정' in report_nm:
+                                    # 3자배정은 호재! (큰손 유입)
+                                    signal_type = '3rd_party_allocation'
+                                    confidence = 0.85
+                                    expected_impact = '+15~30% (상한가 후보)'
+                                    reason = '🚀 제3자배정 유상증자 (신규 자금/주주)'
+                                    is_negative = False
+                                else:
+                                    # 일반 주주배정은 악재
+                                    signal_type = 'dilution'
+                                    is_negative = True
+                                    reason = '⚠️ 주주배정 유상증자 (주가 희석)'
+
+                            # 🔥 [NEW] 최대주주 변경 (플루토스 사례)
+                            elif '최대주주변경' in report_nm or '주식양수도' in report_nm:
+                                signal_type = 'ownership_change'
+                                confidence = 0.90
+                                expected_impact = '+20~30% (경영권 프리미엄)'
+                                reason = '👑 최대주주 변경 (경영권 매각)'
+
                             elif '전환사채' in report_nm or 'CB' in report_nm:
                                 signal_type = 'cb_issue'
                                 is_negative = True
