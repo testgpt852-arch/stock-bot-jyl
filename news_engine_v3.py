@@ -62,31 +62,33 @@ class NewsEngineV3:
                 'market': 'US'
             },
             
-            # === 🔥 한국 뉴스 소스 (v3.0 신규) ===
+            # === 🔥 한국 뉴스 소스 (v3.1 수정) ===
             {
                 'name': '네이버 증권 속보',
                 'type': 'naver_breaking',
                 'url': 'https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258',
                 'market': 'KR'
             },
+            # 🔧 v3.1: 한국 RSS URL 업데이트 (404 오류 해결)
             {
                 'name': '매일경제',
                 'type': 'rss',
-                'url': 'https://www.mk.co.kr/rss/50200002/',
+                'url': 'https://www.mk.co.kr/rss/30000001/',  # 경제 전체 RSS로 변경
                 'market': 'KR'
             },
             {
                 'name': '한국경제',
                 'type': 'rss',
-                'url': 'https://www.hankyung.com/feed/stock',
+                'url': 'https://www.hankyung.com/feed/economy',  # /stock → /economy로 변경
                 'market': 'KR'
             },
-            {
-                'name': '서울경제',
-                'type': 'rss',
-                'url': 'https://www.sedaily.com/RSS/S01.xml',
-                'market': 'KR'
-            },
+            # 🔧 v3.1: 서울경제 일시 제외 (404 지속 시)
+            # {
+            #     'name': '서울경제',
+            #     'type': 'rss',
+            #     'url': 'https://www.sedaily.com/RSS/S01.xml',
+            #     'market': 'KR'
+            # },
         ]
         
         # SEC 8-K 공시
@@ -133,12 +135,19 @@ class NewsEngineV3:
             
             if response.status_code != 200:
                 logger.warning(f"{source['name']} RSS 실패: {response.status_code}")
+                # 🔧 v3.1: 404 등 에러 시에도 빈 리스트 반환하여 계속 진행
                 return items
             
-            feed = feedparser.parse(response.text)
+            # 🔧 v3.1: RSS 파싱 실패 시에도 계속 진행
+            try:
+                feed = feedparser.parse(response.text)
+            except Exception as e:
+                logger.warning(f"{source['name']} RSS 파싱 실패: {e}")
+                return items
             
             if not feed.entries:
                 logger.warning(f"{source['name']} 엔트리 없음")
+                # 🔧 v3.1: 엔트리 없어도 빈 리스트 반환하여 계속 진행
                 return items
             
             for entry in feed.entries[:20]:
