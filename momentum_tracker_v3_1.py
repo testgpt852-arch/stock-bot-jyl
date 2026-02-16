@@ -236,10 +236,61 @@ class MomentumTrackerV3_1:
     
     async def _scan_realtime_surge_us(self):
         """
-        🔥 v3.1: Finviz 급등주 스캔 (Yahoo 대신)
-        - Finviz는 HTML 구조가 안정적
-        - React 렌더링 문제 없음
+        🔥 v3.1.1: 다중 fallback 시스템
+        1차: Finviz 스크래핑
+        2차: Yahoo Finance screener
+        3차: yfinance API 직접 조회
         """
+        signals = []
+        
+        # === 1차 시도: Finviz ===
+        try:
+            logger.info("1차 시도: Finviz 급등주 스캔")
+            signals = await self._scan_finviz()
+            
+            if signals:
+                logger.info(f"✅ Finviz 성공: {len(signals)}개")
+                return signals
+            else:
+                logger.warning("Finviz 결과 0개, Yahoo 시도")
+                
+        except Exception as e:
+            logger.warning(f"Finviz 실패: {e}, Yahoo 시도")
+        
+        # === 2차 시도: Yahoo Finance ===
+        try:
+            logger.info("2차 시도: Yahoo Finance screener")
+            signals = await self._scan_yahoo_screener()
+            
+            if signals:
+                logger.info(f"✅ Yahoo 성공: {len(signals)}개")
+                return signals
+            else:
+                logger.warning("Yahoo 결과 0개, yfinance API 시도")
+                
+        except Exception as e:
+            logger.warning(f"Yahoo 실패: {e}, yfinance API 시도")
+        
+        # === 3차 시도: yfinance API ===
+        try:
+            logger.info("3차 시도: yfinance API")
+            signals = await self._scan_yfinance_api()
+            
+            if signals:
+                logger.info(f"✅ yfinance API 성공: {len(signals)}개")
+            else:
+                logger.error("⚠️ 모든 방법 실패: 미국 급등주 0개")
+                
+        except Exception as e:
+            logger.error(f"yfinance API도 실패: {e}")
+        
+        return signals
+    
+    async def _scan_finviz(self):
+        """1차: Finviz 스크래핑"""
+        signals = []
+    async def _scan_finviz(self):
+        """1차: Finviz 스크래핑"""
         signals = []
         
         try:
@@ -748,3 +799,172 @@ class MomentumTrackerV3_1:
             for _ in range(50):
                 if self.dynamic_tickers_kr:
                     self.dynamic_tickers_kr.pop()
+    
+    async def _scan_yahoo_screener(self):
+        """2차: Yahoo Finance screener (간단한 API 방식)"""
+        signals = []
+        
+        try:
+            headers = self._get_random_headers()
+            
+            # Yahoo Finance screener API (공개 엔드포인트)
+            yahoo_url = "https://query1.finance.yahoo.com/v1/finance/screener"
+            
+            payload = {
+                "size": 50,
+                "offset": 0,
+                "sortField": "percentchange",
+                "sortType": "desc",
+                "quoteType": "equity",
+                "query": {
+                    "operator": "and",
+                    "operands": [
+                        {"operator": "gt", "operands": ["percentchange", 10]},
+                        {"operator": "gt", "operands": ["intradaymarketcap", 1000000]}
+                    ]
+                }
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                await self._random_delay(1.0, 0.3)
+                
+                async with session.post(yahoo_url, json=payload, headers=headers, timeout=15) as response:
+                    if response.status != 200:
+                        logger.warning(f"Yahoo screener 실패: {response.status}")
+                        return signals
+                    
+                    data = await response.json()
+                    
+                    quotes = data.get('finance', {}).get('result', [{}])[0].get('quotes', [])
+                    
+                    if not quotes:
+                        logger.warning("Yahoo screener 결과 없음")
+                        return signals
+                    
+                    logger.info(f"Yahoo screener: {len(quotes)}개 발견")
+                    
+                    for quote in quotes[:20]:  # 상위 20개
+                        try:
+                            ticker = quote.get('symbol', '')
+                            name = quote.get('shortName', ticker)
+                            price = quote.get('regularMarketPrice', 0)
+                            change_pct = quote.get('regularMarketChangePercent', 0)
+                            volume = quote.get('regularMarketVolume', 0)
+                            avg_volume = quote.get('averageDailyVolume3Month', 0)
+                            
+                            if not ticker:
+                                continue
+                            
+                            volume_ratio = volume / avg_volume if avg_volume > 0 else 0
+                            
+                            # 필터
+                            if change_pct < self.min_price_change:
+                                continue
+                            
+                            if volume_ratio < self.min_volume_ratio:
+                                continue
+                            
+                            # 시가총액 체크
+                            market_cap = quote.get('marketCap', 0)
+                            if market_cap > self.max_market_cap_us:
+                                continue
+                            
+                            # 중복 체크
+                            alert_key = f"{ticker}_{datetime.now().date()}"
+                            if alert_key in self.seen_surge:
+                                continue
+                            
+                            self.seen_surge.add(alert_key)
+                            
+                            signals.append({
+                                'ticker': ticker,
+                                'name': name,
+                                'market': 'US',
+                                'price': price,
+                                'change_percent': change_pct,
+                                'volume': volume,
+                                'volume_ratio': volume_ratio,
+                                'signals': [f'Surge {change_pct:.1f}%', f'Volume {volume_ratio:.1f}x'],
+                                'reason': f'🔥 Yahoo Screener 급등 ({change_pct:.1f}%)',
+                                'timestamp': datetime.now(),
+                                'alert_type': 'realtime_surge'
+                            })
+                            
+                            logger.info(f"🔥 US Surge (Yahoo): {ticker} +{change_pct:.1f}%")
+                            
+                        except Exception as e:
+                            logger.debug(f"Yahoo quote 파싱 오류: {e}")
+                            continue
+            
+        except Exception as e:
+            logger.error(f"Yahoo screener 오류: {e}")
+        
+        return signals
+    
+    async def _scan_yfinance_api(self):
+        """3차: yfinance API로 직접 조회 (최후 수단)"""
+        signals = []
+        
+        try:
+            logger.info("yfinance API로 S&P 500 상위 종목 조회")
+            
+            # S&P 500 주요 종목들 (유동성 높은 상위 50개)
+            sp500_tickers = [
+                'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META', 'BRK.B', 'UNH', 'JNJ',
+                'V', 'WMT', 'JPM', 'MA', 'PG', 'HD', 'CVX', 'MRK', 'ABBV', 'KO',
+                'PEP', 'AVGO', 'COST', 'TMO', 'MCD', 'CSCO', 'ACN', 'DHR', 'VZ', 'ABT',
+                'ADBE', 'NFLX', 'CRM', 'NKE', 'WFC', 'TXN', 'BMY', 'PM', 'NEE', 'UPS',
+                'RTX', 'HON', 'ORCL', 'QCOM', 'IBM', 'AMD', 'INTC', 'BA', 'CAT', 'GE'
+            ]
+            
+            for ticker in sp500_tickers[:30]:  # 상위 30개만 체크 (속도)
+                try:
+                    await self._random_delay(0.2, 0.1)  # 빠른 체크
+                    
+                    stock = await asyncio.to_thread(yf.Ticker, ticker)
+                    hist = stock.history(period='5d')
+                    
+                    if hist.empty or len(hist) < 2:
+                        continue
+                    
+                    current = hist['Close'].iloc[-1]
+                    prev = hist['Close'].iloc[-2]
+                    change_pct = ((current - prev) / prev) * 100
+                    
+                    volume = hist['Volume'].iloc[-1]
+                    avg_volume = hist['Volume'][:-1].mean()
+                    volume_ratio = volume / avg_volume if avg_volume > 0 else 0
+                    
+                    # 급등 체크
+                    if change_pct >= self.min_price_change and volume_ratio >= self.min_volume_ratio:
+                        alert_key = f"{ticker}_{datetime.now().date()}"
+                        if alert_key not in self.seen_surge:
+                            self.seen_surge.add(alert_key)
+                            
+                            info = stock.info
+                            name = info.get('longName', ticker)
+                            
+                            signals.append({
+                                'ticker': ticker,
+                                'name': name,
+                                'market': 'US',
+                                'price': current,
+                                'change_percent': change_pct,
+                                'volume': volume,
+                                'volume_ratio': volume_ratio,
+                                'signals': [f'Surge {change_pct:.1f}%', f'Volume {volume_ratio:.1f}x'],
+                                'reason': f'🔥 yfinance API 급등 ({change_pct:.1f}%)',
+                                'timestamp': datetime.now(),
+                                'alert_type': 'realtime_surge'
+                            })
+                            
+                            logger.info(f"🔥 US Surge (yfinance): {ticker} +{change_pct:.1f}%")
+                
+                except Exception as e:
+                    logger.debug(f"{ticker} yfinance 체크 오류: {e}")
+                    continue
+            
+        except Exception as e:
+            logger.error(f"yfinance API 오류: {e}")
+        
+        return signals
