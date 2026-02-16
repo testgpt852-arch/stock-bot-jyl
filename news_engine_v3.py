@@ -62,33 +62,26 @@ class NewsEngineV3:
                 'market': 'US'
             },
             
-            # === 🔥 한국 뉴스 소스 (v3.1 수정) ===
+            # === 🔥 한국 뉴스 소스 (v3.1.1 최종) ===
             {
                 'name': '네이버 증권 속보',
                 'type': 'naver_breaking',
                 'url': 'https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258',
                 'market': 'KR'
             },
-            # 🔧 v3.1: 한국 RSS URL 업데이트 (404 오류 해결)
             {
                 'name': '매일경제',
                 'type': 'rss',
-                'url': 'https://www.mk.co.kr/rss/30000001/',  # 경제 전체 RSS로 변경
+                'url': 'https://www.mk.co.kr/rss/30000001/',
                 'market': 'KR'
             },
             {
                 'name': '한국경제',
                 'type': 'rss',
-                'url': 'https://www.hankyung.com/feed/economy',  # /stock → /economy로 변경
+                'url': 'https://www.hankyung.com/feed/economy',
                 'market': 'KR'
             },
-            # 🔧 v3.1: 서울경제 일시 제외 (404 지속 시)
-            # {
-            #     'name': '서울경제',
-            #     'type': 'rss',
-            #     'url': 'https://www.sedaily.com/RSS/S01.xml',
-            #     'market': 'KR'
-            # },
+            # 🔧 v3.1.1: 서울경제 완전 제거 (RSS 서비스 폐지됨)
         ]
         
         # SEC 8-K 공시
@@ -123,7 +116,7 @@ class NewsEngineV3:
             
             news_list.sort(key=lambda x: x.get('published_timestamp', 0), reverse=True)
             
-            logger.info(f"📊 뉴스 수집: {len(news_list)}개 (미국 5대장 + 한국 4대장 + SEC)")
+            logger.info(f"📊 뉴스 수집: {len(news_list)}개 (미국 5대장 + 한국 3대장 + SEC)")
             return news_list
     
     async def _fetch_rss(self, session, source):
