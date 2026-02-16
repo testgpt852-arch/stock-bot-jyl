@@ -12,7 +12,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('bot_v3_1.log'),
+        logging.FileHandler('bot_v3_1_1.log'),
         logging.StreamHandler()
     ]
 )
@@ -22,15 +22,15 @@ logger = logging.getLogger(__name__)
 async def main():
     """메인"""
     logger.info("=" * 60)
-    logger.info("🐺 조기경보 시스템 v3.1 완전체 시작")
+    logger.info("🐺 조기경보 시스템 v3.1.1 완전 방어 시작")
     logger.info("=" * 60)
     logger.info("AI Brain v3.0: ✅ (공격적 스캘퍼)")
-    logger.info("News Engine v3.0: ✅ (미국 5대장 + 한국 4대장 + SEC)")
-    logger.info("Momentum Tracker v3.1: ✅ (Finviz + 이중 스캔)")
+    logger.info("News Engine v3.1.1: ✅ (미국 5대장 + 한국 3대장 + SEC)")
+    logger.info("Momentum Tracker v3.1.1: ✅ (다중 fallback)")
     logger.info("Predictor Engine v3.0: ✅ (SEC Only)")
     logger.info("=" * 60)
-    logger.info("🔥 v3.1 완전체 특징:")
-    logger.info("  • Finviz 급등주 스캔 (Yahoo 대신)")
+    logger.info("🔥 v3.1.1 완전 방어 특징:")
+    logger.info("  • 다중 fallback (Finviz → Yahoo → yfinance)")
     logger.info("  • 뉴스 종목 1분 주기 감시")
     logger.info("  • 시장 전체 10분 주기 스캔")
     logger.info("  • 랜덤 User-Agent (차단 방지)")
