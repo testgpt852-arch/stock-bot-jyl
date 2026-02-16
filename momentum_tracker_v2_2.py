@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Momentum Tracker v2.2 - 완전체
-- 급등주 감지
-- 프로그램 매매 (3억+)
-- 테마주 연쇄 상승 (1등, 2등, 3등)
-- 중복 방지 완벽
+Momentum Tracker v3.1 - 제미나이 검증 반영 (완전체)
+- 🔥 Yahoo Finance 스크래핑 폐기 → Finviz + yfinance 조합
+- 이중 스캔 모드: 뉴스 종목 1분 / 시장 전체 10분
+- 랜덤 User-Agent + 랜덤 지연 (Anti-Ban)
+- 동적 종목 추가 (뉴스 연동)
 """
 
 import asyncio
@@ -14,219 +14,497 @@ from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 import yfinance as yf
 import re
+import random
+from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-class MomentumTrackerV2_2:
+class MomentumTrackerV3_1:
     def __init__(self):
         # 한국 소스
+        self.kr_surge_url = "https://finance.naver.com/sise/sise_quant.naver"
         self.program_url = "https://finance.naver.com/sise/programDeal.naver"
         self.theme_url = "https://finance.naver.com/sise/theme.naver"
         
-        # 미국 종목
-        self.us_watchlist = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMD', 'GOOGL', 'META', 'AMZN']
+        # 🔥 v3.1: Yahoo 대신 Finviz 사용 (HTML 구조 안정적)
+        self.us_gainers_url = "https://finviz.com/screener.ashx?v=111&s=ta_topgainers"
         
-        # 한국 종목
-        self.kr_watchlist = [
-            ('005930', '삼성전자'),
-            ('000660', 'SK하이닉스'),
-            ('035420', 'NAVER'),
-            ('005380', '현대차'),
-            ('051910', 'LG화학'),
-        ]
+        # 🔥 v3.1: 동적 종목 리스트 (뉴스에서 포착된 종목)
+        self.dynamic_tickers_us = set()  # 미국
+        self.dynamic_tickers_kr = set()  # 한국
         
         # 중복 방지
-        self.seen_surge = set()        # 급등 알림
-        self.seen_program = set()      # 프로그램 매매
-        self.seen_theme = set()        # 테마
+        self.seen_surge = set()
+        self.seen_program = set()
+        self.seen_theme = set()
         
-        logger.info("📊 Momentum Tracker v2.2 초기화")
+        # Beast Mode 필터
+        self.min_volume_ratio = 5.0
+        self.min_price_change = 10.0
+        self.max_market_cap_kr = 1_000_000
+        self.max_market_cap_us = 100_000_000_000
+        
+        # 🔥 v3.1: User-Agent 풀 (차단 방지)
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0',
+            'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+        ]
+        
+        logger.info("🐺 Momentum Tracker v3.1 완전체 초기화")
     
-    async def scan_momentum(self, market='KR'):
-        """모멘텀 스캔 (통합)"""
+    def _get_random_headers(self):
+        """🔥 v3.1: 랜덤 User-Agent (차단 방지)"""
+        return {
+            'User-Agent': random.choice(self.user_agents),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        }
+    
+    async def _random_delay(self, base_seconds=1.0, jitter=0.5):
+        """🔥 v3.1: 랜덤 지연 (Anti-Ban)"""
+        delay = base_seconds + random.uniform(-jitter, jitter)
+        await asyncio.sleep(max(0.1, delay))
+    
+    def add_dynamic_ticker(self, ticker, market='US'):
+        """
+        🔥 v3.1: 뉴스에서 포착된 종목 동적 추가
+        이 종목들은 1분 주기로 집중 감시
+        """
+        if market == 'US':
+            self.dynamic_tickers_us.add(ticker.upper())
+            logger.info(f"➕ 동적 종목 추가 (US): {ticker}")
+        else:
+            self.dynamic_tickers_kr.add(ticker)
+            logger.info(f"➕ 동적 종목 추가 (KR): {ticker}")
+        
+        # 리스트 크기 제한 (메모리 관리)
+        if len(self.dynamic_tickers_us) > 50:
+            self.dynamic_tickers_us.pop()
+        if len(self.dynamic_tickers_kr) > 50:
+            self.dynamic_tickers_kr.pop()
+    
+    async def scan_momentum(self, market='KR', mode='full'):
+        """
+        🔥 v3.1: 이중 스캔 모드
+        - mode='dynamic': 뉴스 종목만 (1분 주기)
+        - mode='full': 시장 전체 스캔 (10분 주기)
+        """
         signals = []
         
         if market == 'KR':
-            # 1. 급등주
-            surge_signals = await self._scan_surge_kr()
-            signals.extend(surge_signals)
-            
-            # 2. 프로그램 매매
-            program_signals = await self._scan_program()
-            signals.extend(program_signals)
-            
-            # 3. 테마주
-            theme_signals = await self._scan_theme()
-            signals.extend(theme_signals)
+            if mode == 'dynamic':
+                # 동적 종목만 빠르게 체크
+                if self.dynamic_tickers_kr:
+                    dynamic_signals = await self._scan_dynamic_kr()
+                    signals.extend(dynamic_signals)
+            else:
+                # 전체 스캔
+                surge_signals = await self._scan_realtime_surge_kr()
+                signals.extend(surge_signals)
+                
+                program_signals = await self._scan_program()
+                signals.extend(program_signals)
+                
+                theme_signals = await self._scan_theme()
+                signals.extend(theme_signals)
         
         else:  # US
-            surge_signals = await self._scan_surge_us()
-            signals.extend(surge_signals)
+            if mode == 'dynamic':
+                # 동적 종목만 빠르게 체크
+                if self.dynamic_tickers_us:
+                    dynamic_signals = await self._scan_dynamic_us()
+                    signals.extend(dynamic_signals)
+            else:
+                # 전체 스캔
+                surge_signals = await self._scan_realtime_surge_us()
+                signals.extend(surge_signals)
         
-        logger.info(f"📊 모멘텀: {len(signals)}개 ({market})")
+        logger.info(f"🐺 모멘텀 [{market}][{mode}]: {len(signals)}개")
         return signals
     
-    async def _scan_surge_kr(self):
-        """한국 급등주"""
+    async def _scan_dynamic_us(self):
+        """🔥 v3.1: 뉴스 종목 빠른 체크 (1분 주기)"""
         signals = []
         
-        try:
-            for code, name in self.kr_watchlist:
-                try:
-                    ticker = f"{code}.KS"
-                    stock = await asyncio.to_thread(yf.Ticker, ticker)
-                    
-                    hist = stock.history(period='5d')
-                    if hist.empty or len(hist) < 2:
-                        continue
-                    
-                    current = hist['Close'].iloc[-1]
-                    prev = hist['Close'].iloc[-2]
-                    change_pct = ((current - prev) / prev) * 100
-                    
-                    volume = hist['Volume'].iloc[-1]
-                    avg_volume = hist['Volume'].mean()
-                    volume_ratio = volume / avg_volume if avg_volume > 0 else 0
-                    
-                    # 급등 조건
-                    detected_signals = []
-                    
-                    if change_pct >= 5.0:
-                        detected_signals.append('급등 5%+')
-                    
-                    if volume_ratio >= 3.0:
-                        detected_signals.append('거래량폭증 3배+')
-                    
-                    # 연속 상승
-                    if len(hist) >= 3:
-                        consecutive = all(
-                            hist['Close'].iloc[i] > hist['Close'].iloc[i-1]
-                            for i in range(-3, 0)
-                        )
-                        if consecutive:
-                            detected_signals.append('연속 상승 3일')
-                    
-                    # 52주 신고가
-                    hist_1y = stock.history(period='1y')
-                    if not hist_1y.empty:
-                        high_52w = hist_1y['High'].max()
-                        if current >= high_52w * 0.99:
-                            detected_signals.append('52주 신고가')
-                    
-                    # 최소 2개 신호
-                    if len(detected_signals) < 2:
-                        continue
-                    
-                    # 중복 체크
-                    alert_key = f"{code}_{datetime.now().date()}"
-                    if alert_key in self.seen_surge:
-                        continue
-                    
-                    self.seen_surge.add(alert_key)
-                    
-                    # 뉴스 역추적 (간소화)
-                    reason = "시장 반응 (뉴스 확인 필요)"
-                    
-                    signals.append({
-                        'ticker': code,
-                        'name': name,
-                        'market': 'KR',
-                        'price': current,
-                        'change_percent': change_pct,
-                        'volume_ratio': volume_ratio,
-                        'signals': detected_signals,
-                        'reason': reason,
-                        'timestamp': datetime.now()
-                    })
-                    
-                    logger.info(f"🔥 급등: {name} +{change_pct:.1f}%")
-                    
-                except Exception as e:
-                    logger.debug(f"{code} 스캔 오류: {e}")
+        for ticker in list(self.dynamic_tickers_us):
+            try:
+                await self._random_delay(0.5, 0.2)  # 0.3~0.7초 랜덤
+                
+                stock = await asyncio.to_thread(yf.Ticker, ticker)
+                hist = stock.history(period='5d')
+                
+                if hist.empty or len(hist) < 2:
                     continue
-            
-        except Exception as e:
-            logger.error(f"한국 급등 스캔 오류: {e}")
-        
-        return signals
-    
-    async def _scan_surge_us(self):
-        """미국 급등주"""
-        signals = []
-        
-        try:
-            for ticker in self.us_watchlist:
-                try:
-                    stock = await asyncio.to_thread(yf.Ticker, ticker)
-                    
-                    hist = stock.history(period='5d')
-                    if hist.empty or len(hist) < 2:
-                        continue
-                    
-                    current = hist['Close'].iloc[-1]
-                    prev = hist['Close'].iloc[-2]
-                    change_pct = ((current - prev) / prev) * 100
-                    
-                    volume = hist['Volume'].iloc[-1]
-                    avg_volume = hist['Volume'].mean()
-                    volume_ratio = volume / avg_volume if avg_volume > 0 else 0
-                    
-                    detected_signals = []
-                    
-                    if change_pct >= 5.0:
-                        detected_signals.append('Surge 5%+')
-                    
-                    if volume_ratio >= 3.0:
-                        detected_signals.append('Volume Explosion')
-                    
-                    if len(detected_signals) < 2:
-                        continue
-                    
+                
+                current = hist['Close'].iloc[-1]
+                prev = hist['Close'].iloc[-2]
+                change_pct = ((current - prev) / prev) * 100
+                
+                volume = hist['Volume'].iloc[-1]
+                avg_volume = hist['Volume'][:-1].mean()
+                volume_ratio = volume / avg_volume if avg_volume > 0 else 0
+                
+                # 급등 체크
+                if change_pct >= self.min_price_change and volume_ratio >= self.min_volume_ratio:
                     alert_key = f"{ticker}_{datetime.now().date()}"
-                    if alert_key in self.seen_surge:
-                        continue
-                    
-                    self.seen_surge.add(alert_key)
-                    
-                    signals.append({
-                        'ticker': ticker,
-                        'name': ticker,
-                        'market': 'US',
-                        'price': current,
-                        'change_percent': change_pct,
-                        'volume_ratio': volume_ratio,
-                        'signals': detected_signals,
-                        'reason': "Market reaction (check news)",
-                        'timestamp': datetime.now()
-                    })
-                    
-                    logger.info(f"🔥 Surge: {ticker} +{change_pct:.1f}%")
-                    
-                except Exception as e:
-                    logger.debug(f"{ticker} scan error: {e}")
+                    if alert_key not in self.seen_surge:
+                        self.seen_surge.add(alert_key)
+                        
+                        signals.append({
+                            'ticker': ticker,
+                            'name': ticker,
+                            'market': 'US',
+                            'price': current,
+                            'change_percent': change_pct,
+                            'volume_ratio': volume_ratio,
+                            'signals': [f'Surge {change_pct:.1f}%', f'Volume {volume_ratio:.1f}x'],
+                            'reason': f'🔥 뉴스 종목 급등 ({change_pct:.1f}%, {volume_ratio:.1f}배)',
+                            'timestamp': datetime.now(),
+                            'alert_type': 'dynamic_surge'
+                        })
+                        
+                        logger.info(f"🔥 뉴스 종목 급등: {ticker} +{change_pct:.1f}%")
+                
+            except Exception as e:
+                logger.debug(f"동적 종목 체크 오류 ({ticker}): {e}")
+                continue
+        
+        return signals
+    
+    async def _scan_dynamic_kr(self):
+        """🔥 v3.1: 한국 뉴스 종목 빠른 체크"""
+        signals = []
+        
+        for code in list(self.dynamic_tickers_kr):
+            try:
+                await self._random_delay(0.5, 0.2)
+                
+                ticker_symbol = f"{code}.KS" if code.startswith('0') else f"{code}.KQ"
+                stock = await asyncio.to_thread(yf.Ticker, ticker_symbol)
+                hist = stock.history(period='5d')
+                
+                if hist.empty or len(hist) < 2:
                     continue
+                
+                current = hist['Close'].iloc[-1]
+                prev = hist['Close'].iloc[-2]
+                change_pct = ((current - prev) / prev) * 100
+                
+                volume = hist['Volume'].iloc[-1]
+                avg_volume = hist['Volume'][:-1].mean()
+                volume_ratio = volume / avg_volume if avg_volume > 0 else 0
+                
+                if change_pct >= self.min_price_change and volume_ratio >= self.min_volume_ratio:
+                    alert_key = f"{code}_{datetime.now().date()}"
+                    if alert_key not in self.seen_surge:
+                        self.seen_surge.add(alert_key)
+                        
+                        info = stock.info
+                        name = info.get('longName', code)
+                        
+                        signals.append({
+                            'ticker': code,
+                            'name': name,
+                            'market': 'KR',
+                            'price': current,
+                            'change_percent': change_pct,
+                            'volume_ratio': volume_ratio,
+                            'signals': [f'급등 {change_pct:.1f}%', f'거래량 {volume_ratio:.1f}배'],
+                            'reason': f'🔥 뉴스 종목 급등 ({change_pct:.1f}%, {volume_ratio:.1f}배)',
+                            'timestamp': datetime.now(),
+                            'alert_type': 'dynamic_surge'
+                        })
+                        
+                        logger.info(f"🔥 뉴스 종목 급등: {name} +{change_pct:.1f}%")
+                
+            except Exception as e:
+                logger.debug(f"동적 종목 체크 오류 ({code}): {e}")
+                continue
+        
+        return signals
+    
+    async def _scan_realtime_surge_us(self):
+        """
+        🔥 v3.1: Finviz 급등주 스캔 (Yahoo 대신)
+        - Finviz는 HTML 구조가 안정적
+        - React 렌더링 문제 없음
+        """
+        signals = []
+        
+        try:
+            headers = self._get_random_headers()
+            
+            async with aiohttp.ClientSession() as session:
+                await self._random_delay(1.0, 0.3)  # 0.7~1.3초
+                
+                async with session.get(self.us_gainers_url, headers=headers, timeout=15) as response:
+                    if response.status != 200:
+                        logger.warning(f"Finviz 접근 실패: {response.status}")
+                        return signals
+                    
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'html.parser')
+                    
+                    # Finviz 테이블 구조: <table class="table-light">
+                    table = soup.find('table', {'class': 'table-light'})
+                    if not table:
+                        logger.warning("Finviz 테이블을 찾을 수 없음")
+                        return signals
+                    
+                    rows = table.find_all('tr')[1:51]  # 헤더 제외, 상위 50개
+                    
+                    for row in rows:
+                        try:
+                            cols = row.find_all('td')
+                            if len(cols) < 12:
+                                continue
+                            
+                            # Ticker
+                            ticker_elem = cols[1].find('a')
+                            if not ticker_elem:
+                                continue
+                            ticker = ticker_elem.text.strip()
+                            
+                            # Company
+                            name = cols[2].text.strip()
+                            
+                            # Price
+                            price_text = cols[8].text.strip()
+                            try:
+                                price = float(price_text)
+                            except:
+                                continue
+                            
+                            # Change %
+                            change_text = cols[10].text.strip().replace('%', '').replace('+', '')
+                            try:
+                                change_pct = float(change_text)
+                            except:
+                                continue
+                            
+                            # Volume
+                            volume_text = cols[11].text.strip()
+                            try:
+                                if 'M' in volume_text:
+                                    volume = float(volume_text.replace('M', '')) * 1_000_000
+                                elif 'K' in volume_text:
+                                    volume = float(volume_text.replace('K', '')) * 1_000
+                                else:
+                                    volume = float(volume_text.replace(',', ''))
+                            except:
+                                volume = 0
+                            
+                            # 필터: 10% 이상
+                            if change_pct < self.min_price_change:
+                                continue
+                            
+                            # yfinance로 추가 검증
+                            await self._random_delay(0.3, 0.1)
+                            
+                            try:
+                                stock = await asyncio.to_thread(yf.Ticker, ticker)
+                                info = stock.info
+                                hist = stock.history(period='5d')
+                                
+                                if hist.empty or len(hist) < 2:
+                                    continue
+                                
+                                # 거래량 비율
+                                current_volume = hist['Volume'].iloc[-1]
+                                avg_volume = hist['Volume'][:-1].mean()
+                                volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
+                                
+                                if volume_ratio < self.min_volume_ratio:
+                                    continue
+                                
+                                # 시가총액 체크
+                                market_cap = info.get('marketCap', 0)
+                                if market_cap > self.max_market_cap_us:
+                                    continue
+                                
+                                # ETF 제외
+                                if info.get('quoteType') == 'ETF':
+                                    continue
+                                
+                            except Exception as e:
+                                logger.debug(f"{ticker} yfinance 검증 실패: {e}")
+                                # 실패해도 Finviz 데이터만으로 일단 포함
+                                if volume == 0:
+                                    continue
+                                volume_ratio = 0
+                            
+                            # 중복 체크
+                            alert_key = f"{ticker}_{datetime.now().date()}"
+                            if alert_key in self.seen_surge:
+                                continue
+                            
+                            self.seen_surge.add(alert_key)
+                            
+                            signals.append({
+                                'ticker': ticker,
+                                'name': name,
+                                'market': 'US',
+                                'price': price,
+                                'change_percent': change_pct,
+                                'volume': volume,
+                                'volume_ratio': volume_ratio if volume_ratio else 0,
+                                'signals': [f'Surge {change_pct:.1f}%', f'Volume {volume_ratio:.1f}x' if volume_ratio else 'High Volume'],
+                                'reason': f'🔥 Finviz 급등 포착 ({change_pct:.1f}%)',
+                                'timestamp': datetime.now(),
+                                'alert_type': 'realtime_surge'
+                            })
+                            
+                            logger.info(f"🔥 US Surge (Finviz): {ticker} +{change_pct:.1f}%")
+                            
+                        except Exception as e:
+                            logger.debug(f"Finviz 행 파싱 오류: {e}")
+                            continue
             
         except Exception as e:
-            logger.error(f"US surge scan error: {e}")
+            logger.error(f"미국 급등 스캔 오류: {e}")
+        
+        return signals
+    
+    async def _scan_realtime_surge_kr(self):
+        """한국 급등주 (v3.0 유지, User-Agent만 랜덤화)"""
+        signals = []
+        
+        try:
+            headers = self._get_random_headers()
+            
+            async with aiohttp.ClientSession() as session:
+                await self._random_delay(1.0, 0.3)
+                
+                async with session.get(self.kr_surge_url, headers=headers, timeout=15) as response:
+                    if response.status != 200:
+                        logger.warning(f"한국 급등주 페이지 접근 실패: {response.status}")
+                        return signals
+                    
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'html.parser')
+                    
+                    rows = soup.select('table.type_2 tr')[2:52]
+                    
+                    for row in rows:
+                        try:
+                            cols = row.select('td')
+                            if len(cols) < 11:
+                                continue
+                            
+                            name_elem = cols[1].select_one('a')
+                            if not name_elem:
+                                continue
+                            
+                            name = name_elem.text.strip()
+                            href = name_elem.get('href', '')
+                            code_match = re.search(r'code=(\d+)', href)
+                            if not code_match:
+                                continue
+                            
+                            code = code_match.group(1)
+                            
+                            price_text = cols[2].text.strip().replace(',', '')
+                            if not price_text.isdigit():
+                                continue
+                            price = int(price_text)
+                            
+                            change_text = cols[4].text.strip().replace('%', '').replace('+', '').replace('-', '')
+                            if not change_text.replace('.', '', 1).isdigit():
+                                continue
+                            change_pct = float(change_text)
+                            
+                            volume_text = cols[6].text.strip().replace(',', '')
+                            if not volume_text.isdigit():
+                                continue
+                            volume = int(volume_text)
+                            
+                            volume_ratio_text = cols[10].text.strip().replace('%', '').replace('+', '')
+                            if not volume_ratio_text.replace('.', '', 1).isdigit():
+                                continue
+                            volume_ratio = float(volume_ratio_text) / 100.0 + 1.0
+                            
+                            # 필터
+                            if volume_ratio < self.min_volume_ratio:
+                                continue
+                            
+                            if change_pct < self.min_price_change:
+                                continue
+                            
+                            # 시가총액 체크
+                            try:
+                                ticker_symbol = f"{code}.KS" if code.startswith('0') else f"{code}.KQ"
+                                stock = await asyncio.to_thread(yf.Ticker, ticker_symbol)
+                                info = stock.info
+                                
+                                market_cap = info.get('marketCap', 0)
+                                if market_cap > 750_000_000:
+                                    continue
+                                
+                                if info.get('quoteType') == 'ETF':
+                                    continue
+                                
+                            except Exception as e:
+                                logger.debug(f"{code} yfinance 체크 실패: {e}")
+                            
+                            alert_key = f"{code}_{datetime.now().date()}"
+                            if alert_key in self.seen_surge:
+                                continue
+                            
+                            self.seen_surge.add(alert_key)
+                            
+                            signals.append({
+                                'ticker': code,
+                                'name': name,
+                                'market': 'KR',
+                                'price': price,
+                                'change_percent': change_pct,
+                                'volume': volume,
+                                'volume_ratio': volume_ratio,
+                                'signals': [f'급등 {change_pct:.1f}%', f'거래량 {volume_ratio:.1f}배'],
+                                'reason': f'🔥 실시간 급등 포착 ({change_pct:.1f}%, {volume_ratio:.1f}배)',
+                                'timestamp': datetime.now(),
+                                'alert_type': 'realtime_surge'
+                            })
+                            
+                            logger.info(f"🔥 KR Surge: {name} +{change_pct:.1f}%")
+                            
+                        except Exception as e:
+                            logger.debug(f"한국 급등주 파싱 오류: {e}")
+                            continue
+            
+        except Exception as e:
+            logger.error(f"한국 실시간 급등 스캔 오류: {e}")
         
         return signals
     
     async def _scan_program(self):
-        """프로그램 매매 (중복 방지 추가)"""
+        """프로그램 매매 (User-Agent 랜덤화)"""
         signals = []
         
         try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
+            headers = self._get_random_headers()
             
             async with aiohttp.ClientSession() as session:
+                await self._random_delay(1.0, 0.3)
+                
                 async with session.get(self.program_url, headers=headers, timeout=10) as response:
                     if response.status != 200:
                         return signals
                     
                     html = await response.text()
                     soup = BeautifulSoup(html, 'html.parser')
-                    
-                    rows = soup.select('table.type_2 tr')[2:12]
+                    rows = soup.select('table.type_1 tr')[2:32]
                     
                     for row in rows:
                         try:
@@ -253,10 +531,9 @@ class MomentumTrackerV2_2:
                             
                             buy_amount = int(buy_text)
                             
-                            if buy_amount < 300:  # 3억원
+                            if buy_amount < 300:
                                 continue
                             
-                            # 중복 체크
                             alert_key = f"{code}_{datetime.now().date()}"
                             if alert_key in self.seen_program:
                                 continue
@@ -270,7 +547,8 @@ class MomentumTrackerV2_2:
                                 'signal_type': 'program_buy',
                                 'buy_amount': buy_amount,
                                 'reason': f'💻 프로그램 순매수 ({buy_amount/100:.0f}억원)',
-                                'timestamp': datetime.now()
+                                'timestamp': datetime.now(),
+                                'alert_type': 'program'
                             })
                             
                             logger.info(f"💻 프로그램: {name} ({buy_amount/100}억)")
@@ -284,13 +562,15 @@ class MomentumTrackerV2_2:
         return signals
     
     async def _scan_theme(self):
-        """테마주 (1등, 2등, 3등 + 중복 방지)"""
+        """테마주 (User-Agent 랜덤화)"""
         signals = []
         
         try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
+            headers = self._get_random_headers()
             
             async with aiohttp.ClientSession() as session:
+                await self._random_delay(1.0, 0.3)
+                
                 async with session.get(self.theme_url, headers=headers, timeout=10) as response:
                     if response.status != 200:
                         return signals
@@ -323,14 +603,12 @@ class MomentumTrackerV2_2:
                             if change_pct < 3.0 or up_count < 5:
                                 continue
                             
-                            # 중복 체크
                             alert_key = f"{theme_name}_{datetime.now().date()}"
                             if alert_key in self.seen_theme:
                                 continue
                             
                             theme_detail_url = "https://finance.naver.com" + theme_elem.get('href', '')
                             
-                            # 1~3위 추출
                             top3 = await self._get_theme_top3(theme_detail_url, session)
                             
                             if not top3:
@@ -353,7 +631,8 @@ class MomentumTrackerV2_2:
                                 'theme_name': theme_name,
                                 'top3': top3,
                                 'reason': trigger_msg,
-                                'timestamp': datetime.now()
+                                'timestamp': datetime.now(),
+                                'alert_type': 'theme'
                             })
                             
                             logger.info(f"🎨 테마: {theme_name} (1위: {top3[0]['name']})")
@@ -369,6 +648,8 @@ class MomentumTrackerV2_2:
     async def _get_theme_top3(self, theme_url, session):
         """테마 내 1~3위"""
         try:
+            await self._random_delay(0.5, 0.2)
+            
             async with session.get(theme_url, timeout=5) as response:
                 if response.status != 200:
                     return None
@@ -432,3 +713,16 @@ class MomentumTrackerV2_2:
             self.seen_program.clear()
         if len(self.seen_theme) > 1000:
             self.seen_theme.clear()
+        
+        # 동적 종목도 주기적으로 정리 (24시간 지난 것)
+        # 여기서는 단순히 크기만 제한
+        if len(self.dynamic_tickers_us) > 100:
+            # 오래된 것부터 제거 (set이므로 임의로 pop)
+            for _ in range(50):
+                if self.dynamic_tickers_us:
+                    self.dynamic_tickers_us.pop()
+        
+        if len(self.dynamic_tickers_kr) > 100:
+            for _ in range(50):
+                if self.dynamic_tickers_kr:
+                    self.dynamic_tickers_kr.pop()
