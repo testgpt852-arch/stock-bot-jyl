@@ -256,11 +256,33 @@ class MomentumTrackerV3_1:
                     html = await response.text()
                     soup = BeautifulSoup(html, 'html.parser')
                     
-                    # Finviz 테이블 구조: <table class="table-light">
+                    # 🔧 v3.1: Finviz 테이블 찾기 강화 (fallback)
+                    # 방법 1: class="table-light"
                     table = soup.find('table', {'class': 'table-light'})
+                    
+                    # 방법 2: class 없이 첫 번째 큰 테이블
                     if not table:
-                        logger.warning("Finviz 테이블을 찾을 수 없음")
-                        return signals
+                        tables = soup.find_all('table')
+                        for t in tables:
+                            rows = t.find_all('tr')
+                            if len(rows) > 10:  # 최소 10개 행 이상
+                                table = t
+                                logger.info("Finviz 테이블 fallback 사용")
+                                break
+                    
+                    # 방법 3: 모든 tr 태그 직접 검색
+                    if not table:
+                        all_rows = soup.find_all('tr')
+                        if len(all_rows) > 10:
+                            logger.info(f"Finviz 테이블 없음, 전체 tr 사용 ({len(all_rows)}개)")
+                            # 임시 컨테이너 생성
+                            from bs4 import Tag
+                            table = Tag(name='table')
+                            for row in all_rows:
+                                table.append(row)
+                        else:
+                            logger.warning(f"Finviz 데이터 없음 (tr: {len(all_rows)}개)")
+                            return signals
                     
                     rows = table.find_all('tr')[1:51]  # 헤더 제외, 상위 50개
                     
