@@ -75,12 +75,16 @@ class TelegramBotV3_1:
             logger.info("✅ 봇 시작 (v3.1 완전체)")
             
             await self.send_message(
-                "🐺 조기경보 시스템 v3.1 완전체 시작!\n\n"
+                "🐺 조기경보 시스템 v3.1.1 완전 방어 시작!\n\n"
                 "✅ AI Brain v3.0 (공격적 스캘퍼)\n"
-                "✅ News Engine v3.0 (미국 5대장 + 한국 4대장 + SEC)\n"
-                "✅ Momentum Tracker v3.1 (Finviz + 이중 스캔)\n"
+                "✅ News Engine v3.1.1 (미국 5대장 + 한국 3대장 + SEC)\n"
+                "✅ Momentum Tracker v3.1.1 (다중 fallback)\n"
                 "✅ Predictor Engine v3.0 (SEC Only)\n\n"
-                "📊 이중 스캔 모드:\n"
+                "📊 다중 방어 시스템:\n"
+                "• 1차: Finviz 스크래핑\n"
+                "• 2차: Yahoo Finance API\n"
+                "• 3차: yfinance 직접 조회\n\n"
+                "⏱️ 이중 스캔 모드:\n"
                 "• 뉴스 종목: 1분 주기 집중 감시 🔥\n"
                 "• 시장 전체: 10분 주기 전면 스캔\n"
                 "• 랜덤 지연: 차단 방지\n\n"
@@ -94,7 +98,7 @@ class TelegramBotV3_1:
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """시작 명령어"""
         await update.message.reply_text(
-            "🐺 조기경보 시스템 v3.1 완전체\n\n"
+            "🐺 조기경보 시스템 v3.1.1 완전 방어\n\n"
             "📱 사용 가능한 명령어:\n\n"
             "🔍 분석:\n"
             "• /analyze [종목명] - 종목 분석\n\n"
@@ -107,8 +111,8 @@ class TelegramBotV3_1:
             "• /resume - 알림 재개\n\n"
             "❓ /help - 전체 도움말\n\n"
             "━━━━━━━━━━━━━━━━\n"
-            "🔥 v3.1 완전체 특징:\n"
-            "• Finviz 급등주 스캔 (안정적)\n"
+            "🔥 v3.1.1 완전 방어 특징:\n"
+            "• 다중 fallback (Finviz→Yahoo→yfinance)\n"
             "• 뉴스 종목 1분 주기 감시\n"
             "• 시장 전체 10분 주기 스캔\n"
             "• 랜덤 User-Agent (차단 방지)\n"
@@ -217,7 +221,7 @@ class TelegramBotV3_1:
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """시스템 상태"""
         try:
-            msg = "🐺 시스템 상태 (v3.1 완전체)\n\n"
+            msg = "🐺 시스템 상태 (v3.1.1 완전 방어)\n\n"
             
             # 알림 상태
             status_emoji = "⏸️ 일시정지" if self.notifications_paused else "▶️ 활성화"
@@ -229,13 +233,13 @@ class TelegramBotV3_1:
             msg += f"✅ 모델: {', '.join(self.ai.scanner_models[:2])}\n\n"
             
             # 뉴스 엔진
-            msg += "News Engine v3.0\n"
+            msg += "News Engine v3.1.1\n"
             msg += f"✅ 소스: {len(self.news_engine.sources)}개\n"
             msg += f"✅ 중복 체크: {len(self.news_engine.seen_urls)}개\n\n"
             
             # 모멘텀 트래커
-            msg += "Momentum Tracker v3.1\n"
-            msg += f"✅ Finviz 급등주 스캔\n"
+            msg += "Momentum Tracker v3.1.1\n"
+            msg += f"✅ 다중 fallback (Finviz→Yahoo→yfinance)\n"
             msg += f"✅ 뉴스 종목: {len(self.momentum.dynamic_tickers_us)}개 (US)\n"
             msg += f"✅ 뉴스 종목: {len(self.momentum.dynamic_tickers_kr)}개 (KR)\n"
             msg += f"✅ 랜덤 User-Agent: {len(self.momentum.user_agents)}개\n\n"
@@ -293,7 +297,7 @@ class TelegramBotV3_1:
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """도움말"""
         await update.message.reply_text(
-            "📚 조기경보 시스템 v3.1 완전체\n\n"
+            "📚 조기경보 시스템 v3.1.1 완전 방어\n\n"
             "📱 명령어:\n"
             "• /start - 메뉴판\n"
             "• /analyze 종목명 - 종목 분석\n"
@@ -308,8 +312,11 @@ class TelegramBotV3_1:
             "• 장중 - 실시간 뉴스 (30초)\n"
             "• 장중 - 뉴스 종목 감시 (1분) 🔥\n"
             "• 장중 - 시장 전체 스캔 (10분)\n\n"
-            "🔥 v3.1 완전체 특징:\n"
-            "• Finviz 급등주 스캔\n"
+            "🔥 v3.1.1 완전 방어 특징:\n"
+            "• 다중 fallback 시스템:\n"
+            "  1차: Finviz 스크래핑\n"
+            "  2차: Yahoo Finance API\n"
+            "  3차: yfinance 직접 조회\n"
             "• 이중 스캔 모드\n"
             "• 랜덤 User-Agent\n"
             "• 랜덤 지연 (Anti-Ban)\n\n"
