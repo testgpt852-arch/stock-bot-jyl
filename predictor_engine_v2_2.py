@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Predictor Engine v2.2 - 완전체
-- DART API (한국 공시)
-- SEC Form 4 (미국 내부자)
+Predictor Engine v3.0 - Beast Mode (야수 모드)
+- 🔥 DART 공시 완전 제거 (경량화)
+- SEC Form 4 (미국 내부자 매수)
 - SEC 13D/13G (고래 추적)
 - 중복 방지 완벽
 """
@@ -13,42 +13,26 @@ from datetime import datetime, timedelta
 import aiohttp
 from bs4 import BeautifulSoup
 import re
-import urllib.parse
 import yfinance as yf
-from config import Config
 
 logger = logging.getLogger(__name__)
 
-class PredictorEngineV2_2:
+class PredictorEngineV3:
     def __init__(self):
-        # DART API (한국)
-        self.dart_api_url = "https://opendart.fss.or.kr/api/list.xml"
-        self.dart_api_key = Config.DART_API_KEY
-        
-        # SEC (미국)
+        # 🔥 v3.0: DART API 완전 제거
+        # SEC (미국)만 유지
         self.sec_form4_url = "https://www.sec.gov/cgi-bin/browse-edgar"
         self.sec_13d_url = "https://www.sec.gov/cgi-bin/browse-edgar"
         self.sec_company_tickers = "https://www.sec.gov/files/company_tickers.json"
         
-        # 중복 방지
-        self.seen_dart = set()
+        # 중복 방지 (SEC만)
         self.seen_form4 = set()
         self.seen_13d = set()
         
         # CIK → 티커 매핑
         self.cik_to_ticker = {}
-        self.code_cache = {}
         
-        # 유명 투자자 (한국)
-        self.famous_kr_whales = {
-            '국민연금': '🐋 국민연금공단',
-            '미래에셋': '🐋 미래에셋자산운용',
-            '삼성생명': '🐋 삼성생명보험',
-            'KB자산': '🐋 KB자산운용',
-            '한국투자': '🐋 한국투자신탁',
-        }
-        
-        # 유명 고래 (미국) - 40명
+        # 🐋 유명 고래 (미국) - 40명
         self.famous_us_whales = {
             'ICAHN': '👑 Carl Icahn',
             'ACKMAN': '👑 Bill Ackman (Pershing)',
@@ -84,11 +68,12 @@ class PredictorEngineV2_2:
             'LONE PINE': '💎 Lone Pine',
         }
         
-        logger.info("🔮 Predictor Engine v2.2 초기화")
+        logger.info("🔮 Predictor Engine v3.0 Beast Mode 초기화 (SEC Only)")
     
-    async def generate_daily_report(self, market='KR'):
+    async def generate_daily_report(self, market='US'):
         """
-        아침/저녁 리포트
+        아침/저녁 리포트 (간소화)
+        v3.0: SEC 공시만 포함
         """
         today = datetime.now().date()
         
@@ -100,219 +85,25 @@ class PredictorEngineV2_2:
             'risks': []
         }
         
-        if market == 'KR':
-            # DART 공시
-            dart_signals = await self.scan_dart_filings(days=3)
-            if dart_signals:
-                report['hot_stocks'].extend(dart_signals)
-                
-                insider_count = sum(1 for s in dart_signals if s['signal_type'] == 'insider_buy')
-                ownership_count = sum(1 for s in dart_signals if s['signal_type'] == 'ownership_increase')
-                
-                if insider_count > 0:
-                    report['events_today'].append(f"내부자 매수: {insider_count}건")
-                if ownership_count > 0:
-                    report['events_today'].append(f"지분 공시: {ownership_count}건")
-        
-        else:  # US
-            # SEC Form 4
+        if market == 'US':
+            # SEC Form 4 + 13D/13G
             form4_signals = await self.scan_sec_form4(hours=24)
-            if form4_signals:
-                report['hot_stocks'].extend(form4_signals)
-                report['events_today'].append(f"내부자 매수: {len(form4_signals)}건")
+            filing_13d = await self.scan_sec_13d(hours=24)
             
-            # SEC 13D/13G (고래)
-            whale_signals = await self.scan_sec_13d(hours=24)
-            if whale_signals:
-                report['hot_stocks'].extend(whale_signals)
-                report['events_today'].append(f"고래 지분 공시: {len(whale_signals)}건")
+            all_signals = form4_signals + filing_13d
+            report['events_today'] = self._deduplicate_and_rank(all_signals)
+            
+            # 리스크 체크
+            report['risks'] = await self.check_market_risks('US')
         
-        # 중복 제거
-        report['hot_stocks'] = self._deduplicate_and_rank(report['hot_stocks'])
-        
-        # 리스크 체크
-        report['risks'] = await self.check_market_risks(market)
-        
+        logger.info(f"📊 일일 리포트: {len(report['events_today'])}건")
         return report
     
-    async def scan_dart_filings(self, days=3):
-        """한국 DART 공시 (기존 검증됨 + 급등주 로직 강화)"""
-        signals = []
-        
-        if not self.dart_api_key or len(self.dart_api_key) < 10:
-            logger.warning("⚠️ DART API 키 없음")
-            return signals
-        
-        try:
-            params = {
-                'crtfc_key': self.dart_api_key,
-                'page_no': '1',
-                'page_count': '50'
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(self.dart_api_url, params=params, timeout=10) as response:
-                    if response.status != 200:
-                        return signals
-                    
-                    xml = await response.text()
-                    soup = BeautifulSoup(xml, 'xml')
-                    
-                    status = soup.find('status')
-                    if status and status.text != '000':
-                        return signals
-                    
-                    items = soup.find_all('list')
-                    
-                    for item in items:
-                        try:
-                            corp_name = item.find('corp_name').text
-                            report_nm = item.find('report_nm').text
-                            rcept_no = item.find('rcept_no').text
-                            rcept_dt = item.find('rcept_dt').text
-                            
-                            if rcept_no in self.seen_dart:
-                                continue
-                            
-                            filing_date = datetime.strptime(rcept_dt, '%Y%m%d').date()
-                            if filing_date < (datetime.now().date() - timedelta(days=days)):
-                                continue
-                            
-                            # 공시 분류
-                            signal_type = None
-                            confidence = 0.5
-                            expected_impact = ''
-                            is_negative = False
-                            
-                            if '임원' in report_nm or '주요주주특정증권' in report_nm:
-                                signal_type = 'insider_buy'
-                                confidence = 0.75
-                                expected_impact = '+10~30%'
-                                reason = '👔 내부자 매수'
-                            elif '대량보유' in report_nm:
-                                signal_type = 'ownership_increase'
-                                confidence = 0.80
-                                expected_impact = '+15~40%'
-                                reason = '🐋 대량보유 신고 (5%+)'
-                            elif '단일판매' in report_nm or '공급계약' in report_nm:
-                                signal_type = 'contract'
-                                confidence = 0.70
-                                expected_impact = '+10~25%'
-                                reason = '📜 대규모 계약'
-                            
-                            # 🔥 [NEW] 실적 대박 공시 (에스코넥/뉴인텍 사례)
-                            elif '매출액' in report_nm or '손익구조' in report_nm:
-                                signal_type = 'earnings_surprise'
-                                confidence = 0.85
-                                expected_impact = '+15~30%'
-                                reason = '💰 실적 대박 (손익구조 변동)'
-                            elif '잠정실적' in report_nm:
-                                signal_type = 'earnings_provisional'
-                                confidence = 0.80
-                                expected_impact = '+10~20%'
-                                reason = '📊 잠정 실적 발표'
-                                
-                            elif '주식교환' in report_nm or '합병' in report_nm:
-                                signal_type = 'merger'
-                                confidence = 0.85
-                                expected_impact = '+20~50%'
-                                reason = '🤝 M&A 공시'
-                            elif '무상증자' in report_nm:
-                                signal_type = 'bonus_issue'
-                                confidence = 0.75
-                                expected_impact = '+10~30%'
-                                reason = '🎁 무상증자'
-                            elif '공개매수' in report_nm:
-                                signal_type = 'tender_offer'
-                                confidence = 0.90
-                                expected_impact = '+25~60%'
-                                reason = '💰 공개매수'
-                            
-                            # 🔥 [NEW] 유상증자 정밀 분석 (케이바이오 사례)
-                            elif '유상증자' in report_nm:
-                                if '제3자배정' in report_nm or '3자배정' in report_nm:
-                                    # 3자배정은 호재! (큰손 유입)
-                                    signal_type = '3rd_party_allocation'
-                                    confidence = 0.85
-                                    expected_impact = '+15~30% (상한가 후보)'
-                                    reason = '🚀 제3자배정 유상증자 (신규 자금/주주)'
-                                    is_negative = False
-                                else:
-                                    # 일반 주주배정은 악재
-                                    signal_type = 'dilution'
-                                    is_negative = True
-                                    reason = '⚠️ 주주배정 유상증자 (주가 희석)'
-
-                            # 🔥 [NEW] 최대주주 변경 (플루토스 사례)
-                            elif '최대주주변경' in report_nm or '주식양수도' in report_nm:
-                                signal_type = 'ownership_change'
-                                confidence = 0.90
-                                expected_impact = '+20~30% (경영권 프리미엄)'
-                                reason = '👑 최대주주 변경 (경영권 매각)'
-
-                            elif '전환사채' in report_nm or 'CB' in report_nm:
-                                signal_type = 'cb_issue'
-                                is_negative = True
-                                reason = '⚠️ CB 발행'
-                            elif '감자' in report_nm:
-                                signal_type = 'reverse_split'
-                                is_negative = True
-                                reason = '🚨 감자 (극악재)'
-                            else:
-                                continue
-                            
-                            # 종목 코드 매핑
-                            stock_code = await self._get_stock_code_kr(corp_name, session)
-                            ticker = stock_code if stock_code else "UNKNOWN"
-                            
-                            # 유명 투자자
-                            whale_name = None
-                            if not is_negative:
-                                for whale_key, whale_desc in self.famous_kr_whales.items():
-                                    if whale_key in corp_name:
-                                        whale_name = whale_desc
-                                        confidence = min(confidence + 0.1, 0.95)
-                                        break
-                            
-                            self.seen_dart.add(rcept_no)
-                            
-                            filing_url = f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
-                            
-                            signals.append({
-                                'ticker': ticker,
-                                'name': corp_name,
-                                'signal_type': signal_type,
-                                'event_date': filing_date,
-                                'confidence': confidence,
-                                'expected_impact': expected_impact,
-                                'reason': f"{whale_name}\n{reason}" if whale_name else reason,
-                                'filing_id': rcept_no,  # 🆕 중복 체크용
-                                'market': 'KR',  # 🆕 시장 구분
-                                'details': {
-                                    'report_name': report_nm,
-                                    'filing_url': filing_url,
-                                    'is_negative': is_negative
-                                }
-                            })
-                            
-                            logger.info(f"📋 DART: {corp_name} - {reason}")
-                            
-                        except Exception as e:
-                            logger.debug(f"DART 항목 오류: {e}")
-                            continue
-                    
-                    if len(self.seen_dart) > 1000:
-                        self.seen_dart.clear()
-            
-            logger.info(f"✅ DART: {len(signals)}건")
-            return signals
-            
-        except Exception as e:
-            logger.error(f"DART 오류: {e}")
-            return signals
-    
     async def scan_sec_form4(self, hours=24):
-        """미국 SEC Form 4 (기존 검증됨)"""
+        """
+        미국 SEC Form 4 (내부자 거래)
+        v3.0: 기존 로직 유지
+        """
         signals = []
         
         try:
@@ -327,11 +118,12 @@ class PredictorEngineV2_2:
                 'output': 'atom'
             }
             
-            headers = {'User-Agent': 'Mozilla/5.0 (PredictorBot/2.2)'}
+            headers = {'User-Agent': 'Mozilla/5.0 (PredictorBot/3.0)'}
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(self.sec_form4_url, params=params, headers=headers, timeout=15) as response:
                     if response.status != 200:
+                        logger.warning(f"Form 4 접근 실패: {response.status}")
                         return signals
                     
                     xml = await response.text()
@@ -375,8 +167,8 @@ class PredictorEngineV2_2:
                                 'confidence': 0.80,
                                 'expected_impact': '+10~30%',
                                 'reason': '👔 임원 매수 (Form 4)',
-                                'filing_id': link,  # 🆕 중복 체크용
-                                'market': 'US',  # 🆕 시장 구분
+                                'filing_id': link,
+                                'market': 'US',
                                 'details': {
                                     'filing_url': link,
                                     'transaction_type': transaction_type
@@ -386,7 +178,7 @@ class PredictorEngineV2_2:
                             logger.info(f"👔 Form 4: {ticker} 매수")
                             
                         except Exception as e:
-                            logger.debug(f"Form 4 오류: {e}")
+                            logger.debug(f"Form 4 항목 오류: {e}")
                             continue
                     
                     if len(self.seen_form4) > 500:
@@ -400,7 +192,10 @@ class PredictorEngineV2_2:
             return signals
     
     async def scan_sec_13d(self, hours=24):
-        """미국 SEC 13D/13G (고래 추적)"""
+        """
+        미국 SEC 13D/13G (고래 추적)
+        v3.0: 기존 로직 유지
+        """
         signals = []
         
         try:
@@ -428,6 +223,7 @@ class PredictorEngineV2_2:
             async with aiohttp.ClientSession() as session:
                 async with session.get(self.sec_13d_url, params=params, headers=headers, timeout=20) as response:
                     if response.status != 200:
+                        logger.warning(f"13D/13G 접근 실패: {response.status}")
                         return signals
                     
                     xml = await response.text()
@@ -502,8 +298,8 @@ class PredictorEngineV2_2:
                                 'confidence': 0.85,
                                 'expected_impact': '+15~50%',
                                 'reason': trigger_msg,
-                                'filing_id': link,  # 🆕 중복 체크용
-                                'market': 'US',  # 🆕 시장 구분
+                                'filing_id': link,
+                                'market': 'US',
                                 'details': {
                                     'filing_url': link,
                                     'whale_name': whale_name,
@@ -514,7 +310,7 @@ class PredictorEngineV2_2:
                             logger.info(f"🐋 13D: {final_symbol} - {form_type}")
                             
                         except Exception as e:
-                            logger.debug(f"13D 오류: {e}")
+                            logger.debug(f"13D 항목 오류: {e}")
                             continue
                     
                     if len(self.seen_13d) > 1000:
@@ -576,38 +372,6 @@ class PredictorEngineV2_2:
         
         return None
     
-    async def _get_stock_code_kr(self, company_name, session):
-        """한국 종목 코드"""
-        if company_name in self.code_cache:
-            return self.code_cache[company_name]
-        
-        try:
-            encoded = urllib.parse.quote(company_name)
-            url = f"https://finance.naver.com/search/searchList.naver?query={encoded}"
-            
-            async with session.get(url, timeout=5) as response:
-                if response.status != 200:
-                    return None
-                
-                html = await response.text()
-                soup = BeautifulSoup(html, 'html.parser')
-                
-                result = soup.select_one('table.tbl_search tr td.tit a')
-                if not result:
-                    return None
-                
-                href = result.get('href', '')
-                code_match = re.search(r'code=(\d{6})', href)
-                
-                if code_match:
-                    code = code_match.group(1)
-                    self.code_cache[company_name] = code
-                    return code
-        except:
-            pass
-        
-        return None
-    
     async def _parse_form4_type(self, filing_url, session):
         """Form 4 매수/매도 구분"""
         try:
@@ -666,11 +430,7 @@ class PredictorEngineV2_2:
     
     def _deduplicate_and_rank(self, signals):
         """
-        중복 제거 & 순위 - 수정 (제미나이 검증)
-        
-        핵심: "회사 이름이 다르면 다른 놈이다!"
-        - UNKNOWN 티커도 회사명으로 구분
-        - 진짜 같은 회사의 여러 공시만 합침
+        중복 제거 & 순위
         """
         unique_map = {}
         
@@ -679,20 +439,18 @@ class PredictorEngineV2_2:
             name = signal.get('name', 'Unknown')
             filing_id = signal.get('filing_id', '')
             
-            # 🔥 핵심 로직: UNKNOWN이면 회사명으로 구분!
+            # UNKNOWN이면 회사명으로 구분
             if ticker == 'UNKNOWN' or not ticker:
                 unique_key = f"UNKNOWN_{name}"
             else:
                 unique_key = ticker
             
             # 고유 ID = unique_key + filing_id
-            # (같은 회사의 서로 다른 공시는 분리)
             signal_id = f"{unique_key}_{filing_id}"
             
             # 진짜 중복(=같은 공시)만 제외
             if signal_id not in unique_map:
                 unique_map[signal_id] = signal
-            # 같은 signal_id면 건너뜀 (이미 추가됨)
         
         # 신뢰도 순 정렬
         ranked = sorted(
