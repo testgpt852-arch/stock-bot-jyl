@@ -289,9 +289,6 @@ class MomentumTrackerV3_1:
     async def _scan_finviz(self):
         """1차: Finviz 스크래핑"""
         signals = []
-    async def _scan_finviz(self):
-        """1차: Finviz 스크래핑"""
-        signals = []
         
         try:
             headers = self._get_random_headers()
