@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Predictor Engine v3.0 - Beast Mode (야수 모드)
+Predictor Engine (Production) - Beast Mode (야수 모드)
 - 🔥 DART 공시 완전 제거 (경량화)
 - SEC Form 4 (미국 내부자 매수)
 - SEC 13D/13G (고래 추적)
@@ -17,7 +17,7 @@ import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
-class PredictorEngineV3:
+class PredictorEngine:
     def __init__(self):
         # 🔥 v3.0: DART API 완전 제거
         # SEC (미국)만 유지
@@ -68,7 +68,7 @@ class PredictorEngineV3:
             'LONE PINE': '💎 Lone Pine',
         }
         
-        logger.info("🔮 Predictor Engine v3.0 Beast Mode 초기화 (SEC Only)")
+        logger.info("🔮 Predictor Engine (Production) Beast Mode 초기화 (SEC Only)")
     
     async def generate_daily_report(self, market='US'):
         """

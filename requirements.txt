@@ -1,4 +1,4 @@
-# 조기경보 시스템 v2.2 (v3.0 업그레이드) - Requirements
+# 조기경보 시스템 (Production)
 
 # Telegram
 python-telegram-bot==21.0
@@ -8,8 +8,8 @@ telegram==0.0.1
 google-genai==0.2.2
 
 # 데이터 수집
-curl-cffi==0.7.0  # 🆕 보안 사이트 우회 (Business Wire, Benzinga, SEC)
-aiohttp==3.9.3        # ⚠️ 모멘텀/프레딕터 엔진에서 사용 중
+curl-cffi==0.7.0          # Finviz 보안 우회 (Chrome TLS 위장), News Engine에도 사용
+aiohttp==3.9.3             # Yahoo screener, Naver, yfinance fallback
 beautifulsoup4==4.12.0
 feedparser==6.0.11
 yfinance==0.2.52
@@ -18,8 +18,4 @@ lxml
 # 유틸리티
 python-dotenv==1.0.0
 pytz==2024.1
-python-dateutil==2.8.2  # 🆕 SEC 공시 시간 파싱용
-
-# 선택 (현재 미사용)
-# finnhub-python
-# alpha-vantage
+python-dateutil==2.8.2    # SEC 공시 시간 파싱

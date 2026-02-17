@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-News Engine v3.0 - Beast Mode (야수 모드)
+News Engine (Production) - Beast Mode (야수 모드)
 - 5대장 뉴스 소스 (미국)
 - 🔥 한국 뉴스 소스 대폭 확장 (네이버 속보, 매경, 한경, 서경)
 - SEC 8-K
@@ -18,12 +18,12 @@ from difflib import SequenceMatcher
 import re
 from curl_cffi.requests import AsyncSession
 
-from ai_brain_v3 import AIBrainV3
+from ai_brain import AIBrain
 from config import Config
 
 logger = logging.getLogger(__name__)
 
-class NewsEngineV3:
+class NewsEngine:
     def __init__(self, ai_brain):
         self.ai = ai_brain
         self.seen_urls = set()
@@ -87,7 +87,7 @@ class NewsEngineV3:
         # SEC 8-K 공시
         self.sec_url = 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company=&dateb=&owner=include&start=0&count=100&output=atom'
         
-        logger.info("📰 News Engine v3.0 Beast Mode 초기화")
+        logger.info("📰 News Engine (Production) Beast Mode 초기화")
     
     async def scan_all_sources(self):
         """모든 뉴스 소스 병렬 스캔 (curl_cffi)"""
