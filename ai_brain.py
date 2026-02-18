@@ -4,6 +4,7 @@ AI Brain v3.0 - Beast Mode + Production Enhancement
 - 🔥 M&A/자금조달 무조건 9-10점 (필터링 방지)
 - 🎯 티커 정확도 향상: 본문 정확 추출, 추측 금지, NASDAQ 심볼 형식 검증
 - 🆕 Gemma 모델 이원화 + JSON 버그 수정
+- 🔧 모델별 타임아웃 추가 (블로킹 방지)
 """
 
 from google import genai
@@ -15,6 +16,12 @@ import re
 from config import Config
 
 logger = logging.getLogger(__name__)
+
+# 모델별 타임아웃 (초)
+_SCANNER_TIMEOUT = 15   # quick_score: 빠른 1차 필터 → 15초
+_REPORT_TIMEOUT  = 35   # analyze_news_signal: 상세 분석 → 35초
+_SUMMARY_TIMEOUT = 40   # generate_daily_summary → 40초
+
 
 class AIBrainV3:
     def __init__(self):
@@ -60,24 +67,25 @@ class AIBrainV3:
         except Exception:
             return None
 
-    async def _generate(self, model_name, prompt, use_json_mode=True):
+    async def _generate(self, model_name, prompt, use_json_mode=True, timeout=35):
         """
-        🆕 모델별 분기 호출
+        🆕 모델별 분기 호출 + 타임아웃 적용
         - Gemma: JSON mime_type 미지원 → 텍스트 모드 후 _parse_json_safely
         - Gemini: JSON 모드 직접 사용
+        - timeout: 초과 시 asyncio.TimeoutError → 호출부에서 다음 모델로 fallback
         """
         is_gemma = model_name in self.gemma_models
 
         if is_gemma or not use_json_mode:
             # Gemma: 텍스트 모드 (JSON 버그 우회)
-            response = await asyncio.to_thread(
+            coro = asyncio.to_thread(
                 self.client.models.generate_content,
                 model=model_name,
                 contents=prompt,
             )
         else:
             # Gemini: JSON 모드
-            response = await asyncio.to_thread(
+            coro = asyncio.to_thread(
                 self.client.models.generate_content,
                 model=model_name,
                 contents=prompt,
@@ -87,6 +95,8 @@ class AIBrainV3:
                 ),
             )
 
+        # 🔧 타임아웃 적용: 초과 시 TimeoutError 발생 → 다음 모델로 넘어감
+        response = await asyncio.wait_for(coro, timeout=timeout)
         return response.text
 
     async def quick_score(self, title, threshold=8.0):
@@ -116,7 +126,7 @@ class AIBrainV3:
 
         for model in self.scanner_models:
             try:
-                text = await self._generate(model, prompt, use_json_mode=True)
+                text = await self._generate(model, prompt, use_json_mode=True, timeout=_SCANNER_TIMEOUT)
                 result = self._parse_json_safely(text)
                 if not result:
                     logger.debug(f"[{model}] quick_score JSON 파싱 실패")
@@ -124,6 +134,9 @@ class AIBrainV3:
                 score = result.get('score', 0)
                 logger.debug(f"[{model}] quick_score → {score}점")
                 return score >= threshold
+            except asyncio.TimeoutError:
+                logger.warning(f"⏱️ [{model}] quick_score 타임아웃 ({_SCANNER_TIMEOUT}s) → 다음 모델")
+                continue
             except Exception as e:
                 logger.debug(f"[{model}] quick_score 실패: {e}")
                 continue
@@ -208,7 +221,7 @@ class AIBrainV3:
         for model in self.report_models:
             try:
                 logger.info(f"🤖 [{model}] 뉴스 분석 시작...")
-                text = await self._generate(model, prompt, use_json_mode=True)
+                text = await self._generate(model, prompt, use_json_mode=True, timeout=_REPORT_TIMEOUT)
                 result = self._parse_json_safely(text)
                 if not result:
                     logger.warning(f"❌ [{model}] JSON 파싱 실패")
@@ -243,6 +256,9 @@ class AIBrainV3:
 
                 return result
 
+            except asyncio.TimeoutError:
+                logger.warning(f"⏱️ [{model}] 분석 타임아웃 ({_REPORT_TIMEOUT}s) → 다음 모델")
+                continue
             except Exception as e:
                 logger.warning(f"❌ [{model}] analyze_news_signal 실패: {e}")
                 continue
@@ -273,12 +289,16 @@ class AIBrainV3:
         for model in self.report_models:
             try:
                 # 요약은 텍스트 그대로 반환 (JSON 불필요)
-                response = await asyncio.to_thread(
+                coro = asyncio.to_thread(
                     self.client.models.generate_content,
                     model=model,
                     contents=prompt,
                 )
+                response = await asyncio.wait_for(coro, timeout=_SUMMARY_TIMEOUT)
                 return response.text
+            except asyncio.TimeoutError:
+                logger.warning(f"⏱️ [{model}] 요약 타임아웃 ({_SUMMARY_TIMEOUT}s) → 다음 모델")
+                continue
             except Exception as e:
                 logger.debug(f"[{model}] generate_daily_summary 실패: {e}")
                 continue

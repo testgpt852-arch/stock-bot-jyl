@@ -18,6 +18,10 @@ logging.basicConfig(
     ],
 )
 
+# 🔧 google-genai SDK의 AFC(Automatic Function Calling) 내부 로그 억제
+# "AFC is enabled with max remote calls: 10" 반복 출력 방지
+logging.getLogger('google').setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
