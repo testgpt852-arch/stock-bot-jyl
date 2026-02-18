@@ -2,12 +2,13 @@
 """
 AI Brain v3.0 - Beast Mode + Production Enhancement
 - 🔥 M&A/자금조달 무조건 9-10점 (필터링 방지)
-- 🎯 티커 정확도 향상: 본문 정확 추출, 추측 금지
-- ✅ NASDAQ/NYSE 심볼 형식 검증
+- 🎯 티커 정확도 향상: 본문 정확 추출, 추측 금지, NASDAQ 심볼 형식 검증
+- 🆕 Gemma 모델 이원화 + JSON 버그 수정
 """
 
 from google import genai
 from google.genai import types
+import asyncio
 import logging
 import json
 import re
@@ -24,28 +25,33 @@ class AIBrainV3:
 
         self.client = genai.Client(api_key=self.api_key)
 
-        # 사용자 제공 모델 목록 (Gemini 2.5 Flash 계열)
+        # 🆕 이원화 전략 (Gemma 무제한 쿼터 → 24시간 감시)
         self.scanner_models = [
-            'gemini-2.5-flash',
-            'gemini-2.5-flash-lite',
-            'gemini-3-flash',
+            'gemma-3-27b-it',           # 무제한 쿼터 (24시간 감시)
+            'gemma-3-12b-it',
+            'gemini-2.5-flash-lite',    # 백업
         ]
 
         self.report_models = [
-            'gemini-3-flash',
-            'gemini-2.5-flash',
-            'gemini-2.5-flash-lite',
+            'gemini-3-flash-preview',   # 고성능 (/analyze 전용)
+            'gemini-2.5-flash',         # 백업
+            'gemma-3-27b-it',
         ]
 
-        logger.info("🐺 AI Brain v3.0 Beast Mode 초기화")
+        # 🆕 Gemma 모델 목록 (JSON mime_type 미지원 → 텍스트 모드로 처리)
+        self.gemma_models = {'gemma-3-27b-it', 'gemma-3-12b-it', 'gemma-3-4b-it'}
+
+        logger.info("🐺 AI Brain v3.0 Beast Mode 초기화 (Gemma 이원화 적용)")
 
     def _parse_json_safely(self, text):
-        """AI 응답에서 JSON 정밀 추출"""
+        """AI 응답에서 JSON 정밀 추출 (마크다운 + 중괄호 파싱)"""
         try:
             if not text:
                 return None
+            # 마크다운 코드블록 제거
             text = re.sub(r'```json\s*', '', text)
             text = re.sub(r'```\s*', '', text)
+            # 중괄호 범위 추출
             start_idx = text.find('{')
             end_idx = text.rfind('}')
             if start_idx == -1 or end_idx == -1:
@@ -53,6 +59,35 @@ class AIBrainV3:
             return json.loads(text[start_idx:end_idx + 1])
         except Exception:
             return None
+
+    async def _generate(self, model_name, prompt, use_json_mode=True):
+        """
+        🆕 모델별 분기 호출
+        - Gemma: JSON mime_type 미지원 → 텍스트 모드 후 _parse_json_safely
+        - Gemini: JSON 모드 직접 사용
+        """
+        is_gemma = model_name in self.gemma_models
+
+        if is_gemma or not use_json_mode:
+            # Gemma: 텍스트 모드 (JSON 버그 우회)
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=model_name,
+                contents=prompt,
+            )
+        else:
+            # Gemini: JSON 모드
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type='application/json',
+                    temperature=0.3,
+                ),
+            )
+
+        return response.text
 
     async def quick_score(self, title, threshold=8.0):
         """
@@ -81,19 +116,13 @@ class AIBrainV3:
 
         for model in self.scanner_models:
             try:
-                config = types.GenerateContentConfig(
-                    response_mime_type='application/json',
-                    temperature=0.3
-                )
-                response = await self.client.aio.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=config
-                )
-                result = self._parse_json_safely(response.text)
+                text = await self._generate(model, prompt, use_json_mode=True)
+                result = self._parse_json_safely(text)
                 if not result:
+                    logger.debug(f"[{model}] quick_score JSON 파싱 실패")
                     continue
                 score = result.get('score', 0)
+                logger.debug(f"[{model}] quick_score → {score}점")
                 return score >= threshold
             except Exception as e:
                 logger.debug(f"[{model}] quick_score 실패: {e}")
@@ -178,20 +207,16 @@ class AIBrainV3:
 
         for model in self.report_models:
             try:
-                config = types.GenerateContentConfig(
-                    response_mime_type='application/json',
-                    temperature=0.4
-                )
-                response = await self.client.aio.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=config
-                )
-                result = self._parse_json_safely(response.text)
+                logger.info(f"🤖 [{model}] 뉴스 분석 시작...")
+                text = await self._generate(model, prompt, use_json_mode=True)
+                result = self._parse_json_safely(text)
                 if not result:
+                    logger.warning(f"❌ [{model}] JSON 파싱 실패")
                     continue
 
                 score = result.get('score', 0)
+                logger.info(f"✅ [{model}] 분석 성공 → 점수: {score}/10")
+
                 if score < 7:
                     return None
 
@@ -200,7 +225,6 @@ class AIBrainV3:
                 if not top_ticker or top_ticker.lower() in ('null', 'unknown', ''):
                     result['top_ticker'] = None
                 else:
-                    # NASDAQ/NYSE 심볼 형식 검증 (1~5자 영문 대문자)
                     ticker_clean = top_ticker.strip().upper()
                     if re.match(r'^[A-Z]{1,5}$', ticker_clean):
                         result['top_ticker'] = ticker_clean
@@ -220,7 +244,7 @@ class AIBrainV3:
                 return result
 
             except Exception as e:
-                logger.debug(f"[{model}] analyze_news_signal 실패: {e}")
+                logger.warning(f"❌ [{model}] analyze_news_signal 실패: {e}")
                 continue
 
         return None
@@ -248,9 +272,11 @@ class AIBrainV3:
 
         for model in self.report_models:
             try:
-                response = await self.client.aio.models.generate_content(
+                # 요약은 텍스트 그대로 반환 (JSON 불필요)
+                response = await asyncio.to_thread(
+                    self.client.models.generate_content,
                     model=model,
-                    contents=prompt
+                    contents=prompt,
                 )
                 return response.text
             except Exception as e:
