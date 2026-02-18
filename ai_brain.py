@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-AI Brain - Production (야수 모드)
-- 🔥 페르소나: 공격적 스캘퍼
-- 관련주 3개 + 대장주 top_ticker 지목
-- Gemini 2.5 Flash 계열 사용
-- v3.0 → 버전 접미사 제거 (Production 표준화)
+AI Brain v3.0 - Beast Mode + Production Enhancement
+- 🔥 M&A/자금조달 무조건 9-10점 (필터링 방지)
+- 🎯 티커 정확도 향상: 본문 정확 추출, 추측 금지
+- ✅ NASDAQ/NYSE 심볼 형식 검증
 """
 
 from google import genai
@@ -16,7 +15,7 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
-class AIBrain:
+class AIBrainV3:
     def __init__(self):
         self.api_key = Config.GEMINI_API_KEY
 
@@ -25,54 +24,57 @@ class AIBrain:
 
         self.client = genai.Client(api_key=self.api_key)
 
+        # 사용자 제공 모델 목록 (Gemini 2.5 Flash 계열)
         self.scanner_models = [
             'gemini-2.5-flash',
             'gemini-2.5-flash-lite',
+            'gemini-3-flash',
         ]
 
         self.report_models = [
+            'gemini-3-flash',
             'gemini-2.5-flash',
             'gemini-2.5-flash-lite',
         ]
 
-        logger.info("🐺 AI Brain (Beast Mode) 초기화")
+        logger.info("🐺 AI Brain v3.0 Beast Mode 초기화")
 
     def _parse_json_safely(self, text):
-        """AI 응답에서 JSON만 정밀 추출"""
+        """AI 응답에서 JSON 정밀 추출"""
         try:
             if not text:
                 return None
-
             text = re.sub(r'```json\s*', '', text)
             text = re.sub(r'```\s*', '', text)
-
             start_idx = text.find('{')
             end_idx = text.rfind('}')
-
             if start_idx == -1 or end_idx == -1:
                 return None
-
             return json.loads(text[start_idx:end_idx + 1])
         except Exception:
             return None
 
     async def quick_score(self, title, threshold=8.0):
         """
-        빠른 1차 필터 (제목만)
-        - 8점 이상: 상한가 가능성 있는 확실한 호재
+        🔥 v3.0 Beast Mode + 강화: 빠른 1차 필터 (제목만)
+        ⚡ M&A/자금조달 키워드 감지 시 무조건 9-10점
         """
         prompt = f"""
         너는 초단타 급등주 전문 스캘퍼다. 뉴스 제목만 보고 상한가 가능성을 0~10점으로 평가해라.
-
+        
         제목: {title}
-
+        
+        ⚠️ 최우선 규칙 (이 키워드 있으면 무조건 9-10점):
+        - M&A: "acquisition", "merger", "acquired", "merge"
+        - 자금조달: "$100M", "$200M", "private placement", "financing", "raises"
+        - 파트너십: "partnership with [대형 기업]", "collaboration with [유명 기업]"
+        
         평가 기준:
-        - 8~10점: FDA 승인, M&A, 정부 계약, 최대주주 변경, 긴급 공시 등 확실한 호재
-        - 5~7점: 임상 데이터, 파트너십, 실적 서프라이즈 등 중간 호재
-        - 0~4점: 의견, 전망, 분석, 리포트 등 잡담
-
-        ⚠️ 중요: 안정성 따지지 마라. 급등 가능성만 판단해라.
-
+        - 9~10점: M&A, 대규모 자금조달($50M+), 대형 파트너십 (NVIDIA, Microsoft 등)
+        - 8점: FDA 승인, 정부 계약, 최대주주 변경
+        - 5~7점: 임상 데이터, 중소형 파트너십, 실적 서프라이즈
+        - 0~4점: 의견, 전망, 분석, 리포트
+        
         JSON 형식:
         {{"score": 숫자}}
         """
@@ -93,7 +95,6 @@ class AIBrain:
                     continue
                 score = result.get('score', 0)
                 return score >= threshold
-
             except Exception as e:
                 logger.debug(f"[{model}] quick_score 실패: {e}")
                 continue
@@ -102,44 +103,42 @@ class AIBrain:
 
     async def analyze_news_signal(self, news_item):
         """
-        상세 뉴스 분석 + 직접 수혜주 찾기
-        - 대형주(삼성전자, 엔비디아) 추천 금지
-        - 1등 대장주 ticker를 top_ticker 필드로 반환 → 모멘텀 트래커 동적 감시에 활용
-        - 뉴스에 종목명/티커 언급 시 무조건 1순위
-
-        반환값 예시:
-        {
-            "score": 8,
-            "certainty": "confirmed",
-            "summary": "...",
-            "key_catalyst": "...",
-            "ticker_in_news": "RIME",
-            "top_ticker": "RIME",          ← AI가 지목한 1등 대장주 (모멘텀 트래커 연동용)
-            "top_ticker_market": "US",     ← 대장주 시장 (US 또는 KR)
-            "recommendations": [...],
-            "risk_factors": [...]
-        }
+        🔥 v3.0 Beast Mode + 강화: 상세 뉴스 분석 + 티커 정확도 향상
+        ✅ top_ticker: 1등 대장주 티커를 별도 키로 반환
+        🎯 티커 정확도: 본문에서 명확히 추출, 추측 금지, NASDAQ 심볼 형식 검증
         """
         prompt = f"""
         너는 초단타 급등주 전문 스캘퍼다. 이 뉴스를 분석해서 직접 수혜주를 찾아줘.
-
+        
         제목: {news_item['title']}
         출처: {news_item.get('source', 'Unknown')}
-        시장: {news_item.get('market', 'US')}
-
+        
+        ⚠️ 최우선 규칙:
+        1. M&A/자금조달 뉴스는 무조건 9-10점
+        2. 티커는 뉴스 본문에 명시된 것만 사용 (추측 금지!)
+        3. 티커 형식: 1~5자 영문 대문자 (예: AAPL, TSLA, NVDA)
+        4. 뉴스에 티커가 없으면 "UNKNOWN" 입력
+        
         분석 요청:
-        1. 급등 강도 0~10점 (8점 미만은 무시)
+        1. 급등 강도 0~10점
+           - 9-10점: M&A, $50M+ 자금조달, 대형 파트너십
+           - 8점: FDA 승인, 계약 완료
         2. 확실성: "confirmed" (승인/계약 완료) vs "uncertain" (예상/전망)
         3. 직접 수혜주 1등, 2등, 3등 (티커, 기업명, 이유)
-        4. top_ticker: 반드시 1등 대장주의 티커만 (모멘텀 트래커에서 1분 단위 감시에 사용)
-        5. top_ticker_market: 대장주 시장 "US" 또는 "KR"
-
-        🔥 핵심 룰:
-        - 뉴스에 종목명/티커가 명시되어 있다면 반드시 그 종목을 1순위 + top_ticker로 지정
-        - 대형주(삼성전자, SK하이닉스, 엔비디아, 애플, 마이크로소프트) 추천 금지
-        - 시총이 작더라도 직접 수혜를 받는 종목을 찾아라
-        - 종목을 특정할 수 없다면 top_ticker는 null
-
+        4. top_ticker: 수혜주 1등의 티커 (가장 확실한 대장주)
+        
+        🔥 티커 추출 규칙 (매우 중요!):
+        - 뉴스 제목에 "(NASDAQ: TSLA)" 같은 표기가 있으면 그대로 사용
+        - 뉴스 본문에 "Tesla Inc. (NASDAQ: TSLA)" 같은 명시가 있으면 추출
+        - 확실하지 않으면 무조건 "UNKNOWN" (틀린 티커보다 낫다!)
+        - 대형주(삼성전자, 엔비디아, 애플) 추천 금지
+        
+        예시:
+        - "Auddia (NASDAQ: AUUD) Announces Merger" → top_ticker: "AUUD"
+        - "Sensei Biotherapeutics (NASDAQ: SNSE)" → top_ticker: "SNSE"
+        - "Rackspace Technology (NASDAQ: RXT)" → top_ticker: "RXT"
+        - "반도체 산업 전망 긍정적" → top_ticker: "UNKNOWN"
+        
         JSON 형식:
         {{
             "score": 0~10,
@@ -147,8 +146,7 @@ class AIBrain:
             "summary": "핵심 요약 1줄",
             "key_catalyst": "핵심 재료",
             "ticker_in_news": "뉴스에 명시된 종목명/티커 (없으면 null)",
-            "top_ticker": "1등 대장주 티커 (없으면 null)",
-            "top_ticker_market": "US" or "KR",
+            "top_ticker": "수혜주 1등 티커 (확실한 경우만, 아니면 UNKNOWN)",
             "recommendations": [
                 {{
                     "rank": "1등 (대장주)",
@@ -171,6 +169,11 @@ class AIBrain:
             ],
             "risk_factors": ["리스크 1", "리스크 2"]
         }}
+        
+        ⚠️ 다시 강조: 
+        - M&A/자금조달은 무조건 9-10점!
+        - 티커는 본문에 명시된 것만! 추측 절대 금지!
+        - 확실하지 않으면 "UNKNOWN" 입력!
         """
 
         for model in self.report_models:
@@ -185,7 +188,6 @@ class AIBrain:
                     config=config
                 )
                 result = self._parse_json_safely(response.text)
-
                 if not result:
                     continue
 
@@ -193,13 +195,27 @@ class AIBrain:
                 if score < 7:
                     return None
 
-                # top_ticker 보정: ticker_in_news가 있으면 top_ticker에도 반영
-                if not result.get('top_ticker') and result.get('ticker_in_news'):
-                    result['top_ticker'] = result['ticker_in_news']
+                # top_ticker 정규화 + 형식 검증
+                top_ticker = result.get('top_ticker', 'UNKNOWN')
+                if not top_ticker or top_ticker.lower() in ('null', 'unknown', ''):
+                    result['top_ticker'] = None
+                else:
+                    # NASDAQ/NYSE 심볼 형식 검증 (1~5자 영문 대문자)
+                    ticker_clean = top_ticker.strip().upper()
+                    if re.match(r'^[A-Z]{1,5}$', ticker_clean):
+                        result['top_ticker'] = ticker_clean
+                    else:
+                        logger.warning(f"❌ 잘못된 티커 형식: {top_ticker} → UNKNOWN")
+                        result['top_ticker'] = None
 
-                # top_ticker_market 기본값
-                if not result.get('top_ticker_market'):
-                    result['top_ticker_market'] = news_item.get('market', 'US')
+                # recommendations의 티커도 검증
+                for rec in result.get('recommendations', []):
+                    ticker = rec.get('ticker', '')
+                    if ticker and ticker.upper() not in ('UNKNOWN', ''):
+                        ticker_clean = ticker.strip().upper()
+                        if not re.match(r'^[A-Z]{1,5}$', ticker_clean):
+                            logger.warning(f"❌ 추천 티커 형식 오류: {ticker}")
+                            rec['ticker'] = 'UNKNOWN'
 
                 return result
 
@@ -237,9 +253,12 @@ class AIBrain:
                     contents=prompt
                 )
                 return response.text
-
             except Exception as e:
                 logger.debug(f"[{model}] generate_daily_summary 실패: {e}")
                 continue
 
         return "🐺 요약 생성 실패"
+
+
+# Backward compatibility
+AIBrain = AIBrainV3

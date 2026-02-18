@@ -1,23 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-Telegram Bot - Production
-- 모든 import: 버전 접미사 제거된 표준 파일명 사용
-- top_ticker 연동: AI가 지목한 1등 대장주를 즉시 모멘텀 트래커 동적 감시 목록에 추가
-- 이중 스캔 모드: 뉴스 종목 1분 / 시장 전체 10분
+Telegram Bot (Production)
+- ✅ 모든 import 표준화 (버전 접미사 제거)
+- ✅ top_ticker → add_dynamic_ticker 즉시 연동 (AI 대장주 집중 감시)
+- ✅ 이중 스캔 모드: 뉴스 종목 1분 / 시장 전체 10분
+- ✅ 알림 우선순위 표시 (🚨🚨🚨 / 🔥🔥 / 🔥 / 📊)
+- ✅ /stats 명령어 (통계 대시보드)
 """
 
 import asyncio
 import logging
+import random
 from datetime import datetime
+
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from config import Config
-import random
 
-from ai_brain import AIBrain
-from news_engine import NewsEngine
+from config import Config
+
+# ── 표준화된 파일명으로 import ──
+from ai_brain import AIBrainV3
+from news_engine import NewsEngineV3
 from momentum_tracker import MomentumTracker, AlertPriority
-from predictor_engine import PredictorEngine
+from predictor_engine import PredictorEngineV3
 
 logger = logging.getLogger(__name__)
 
@@ -26,119 +31,130 @@ class TelegramBot:
     def __init__(self):
         self.app = None
         self.chat_id = Config.TELEGRAM_CHAT_ID
+
+        # 알림 제어
         self.notifications_paused = False
+
+        # 중복 방지
         self.seen_filings = set()
 
+        # 엔진 초기화
         try:
-            self.ai       = AIBrain()
-            self.news_engine = NewsEngine(self.ai)
-            self.momentum = MomentumTracker()
-            self.predictor = PredictorEngine()
-            logger.info("✅ 모든 엔진 초기화 성공")
+            self.ai        = AIBrainV3()
+            self.news_engine = NewsEngineV3(self.ai)
+            self.momentum  = MomentumTracker()
+            self.predictor = PredictorEngineV3()
+            logger.info("✅ 모든 엔진 초기화 성공 (Production)")
         except Exception as e:
             logger.error(f"❌ 엔진 초기화 실패: {e}")
             raise
 
-        logger.info("🐺 Telegram Bot (Production) 초기화")
+        logger.info("🚀 Telegram Bot (Production) 초기화")
 
-    # ─────────────────────────────────────────────
+    # ────────────────────────────────────────────
     # 봇 시작
-    # ─────────────────────────────────────────────
+    # ────────────────────────────────────────────
     async def start(self):
         try:
             self.app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
 
-            self.app.add_handler(CommandHandler("start",   self.cmd_start))
-            self.app.add_handler(CommandHandler("analyze", self.cmd_analyze))
-            self.app.add_handler(CommandHandler("report",  self.cmd_report))
-            self.app.add_handler(CommandHandler("status",  self.cmd_status))
-            self.app.add_handler(CommandHandler("news",    self.cmd_news))
-            self.app.add_handler(CommandHandler("pause",   self.cmd_pause))
-            self.app.add_handler(CommandHandler("resume",  self.cmd_resume))
-            self.app.add_handler(CommandHandler("help",    self.cmd_help))
-            self.app.add_handler(CommandHandler("stats",   self.cmd_stats))
+            # 명령어 핸들러 등록
+            handlers = [
+                ("start",   self.cmd_start),
+                ("analyze", self.cmd_analyze),
+                ("report",  self.cmd_report),
+                ("status",  self.cmd_status),
+                ("news",    self.cmd_news),
+                ("pause",   self.cmd_pause),
+                ("resume",  self.cmd_resume),
+                ("help",    self.cmd_help),
+                ("stats",   self.cmd_stats),
+            ]
+            for cmd, handler in handlers:
+                self.app.add_handler(CommandHandler(cmd, handler))
 
             await self.app.initialize()
             await self.app.start()
 
+            # 백그라운드 태스크
             asyncio.create_task(self.schedule_reports())
             asyncio.create_task(self.news_monitor())
             asyncio.create_task(self.momentum_monitor_dynamic())  # 1분 주기
             asyncio.create_task(self.momentum_monitor_full())     # 10분 주기
 
-            logger.info("✅ 봇 시작")
+            logger.info("✅ 봇 시작 (Production)")
 
             await self.send_message(
-                "🚀 조기경보 시스템 v3.6 (TradingView 시간대별 분기)\n\n"
-                "✅ AI Brain (공격적 스캘퍼)\n"
-                "✅ News Engine (미국 5대장 + 한국 3대장 + SEC)\n"
-                "✅ Momentum Tracker v3.6 (TradingView 연동)\n"
-                "✅ Predictor Engine (SEC Only)\n\n"
-                "🔥 핵심 개선:\n"
-                "• Finviz: curl_cffi Chrome TLS 위장 (차단 방지)\n"
-                "• 컬럼: 동적 헤더 매핑 (인덱스 고정 제거)\n"
-                "• 장전 감시: yfinance prepost=True\n"
-                "• AI 대장주 → 즉시 1분 집중 감시 연동\n\n"
-                "🚀 v3.6 신규 기능 (TradingView 연동):\n"
-                "• 프리마켓 (18:00~23:30 KST): TradingView 단독\n"
-                "• 정규장 (23:30~06:00 KST): Finviz → TradingView 백업\n"
-                "• 애프터마켓 (06:00~18:00 KST): TradingView 단독\n"
-                "• KST 기준 시간대별 자동 분기\n\n"
-                "⏱️ 스캔 주기:\n"
-                "• 뉴스 종목: 1분 (집중 감시)\n"
-                "• 시장 전체: 10분 (시간대별 자동 분기)\n"
-                "• 뉴스 수집: 30초\n\n"
-                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                "🚀 조기경보 시스템 Production 시작!\n\n"
+                "✅ AI Brain: 대장주 지목 + top_ticker 연동\n"
+                "✅ News Engine: 미국 5대장 + 한국 3대장 + SEC\n"
+                "✅ Momentum Tracker: Finviz(curl_cffi) + 장전 감지\n"
+                "✅ Predictor Engine: SEC Form4 + 13D/G\n\n"
+                "⚡ 핵심 연동 플로우:\n"
+                "  뉴스 호재 → AI 대장주 지목(top_ticker)\n"
+                "  → 즉시 1분 집중 감시 모드 전환 🎯\n"
+                "  → 급등 초입 포착 알림\n\n"
+                "📊 모니터링:\n"
+                "  🇺🇸 미국: AI 지목 종목만 (1분 주기)\n"
+                "  🇰🇷 한국: 전체 급등주 (2분 주기)\n\n"
+                "🎯 노이즈 제거 완료: 미국 Finviz 페니스탁 알림 OFF!"
             )
 
         except Exception as e:
             logger.error(f"봇 시작 실패: {e}")
             raise
 
-    # ─────────────────────────────────────────────
-    # 명령어
-    # ─────────────────────────────────────────────
+    # ────────────────────────────────────────────
+    # 명령어 핸들러
+    # ────────────────────────────────────────────
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # 현재 시간대 표시 (KST 기준)
-        phase = self.momentum._get_market_phase_kst()
-        time_status = {
-            'premarket': '🌅 프리마켓 (18:00~23:30 KST)',
-            'regular': '🏛️ 정규장 (23:30~06:00 KST)',
-            'afterhours': '🌙 애프터마켓 (06:00~18:00 KST)',
-        }[phase]
-        
         await update.message.reply_text(
-            "🐺 조기경보 시스템 v3.6 (TradingView 시간대별 분기)\n\n"
+            "🚀 조기경보 시스템 Production\n\n"
             "📱 명령어:\n"
             "• /analyze [종목명] - 종목 분석\n"
             "• /report - 즉시 리포트\n"
             "• /status - 시스템 상태\n"
-            "• /stats - 알림 통계\n"
+            "• /stats - 📊 알림 통계\n"
             "• /news - 최근 뉴스 TOP 5\n"
             "• /pause - 알림 일시 정지\n"
             "• /resume - 알림 재개\n"
-            "• /help - 도움말\n\n"
-            f"🕐 현재 시간대: {time_status}\n"
-            f"💡 알림: {'⏸️ 일시정지' if self.notifications_paused else '▶️ 활성화'}\n"
-            f"🔍 US 동적 감시: {len(self.momentum.dynamic_tickers_us)}개\n"
-            f"🔍 KR 동적 감시: {len(self.momentum.dynamic_tickers_kr)}개\n\n"
+            "• /help - 전체 도움말\n\n"
+            "━━━━━━━━━━━━━━━━\n"
+            "⚡ 실시간 모니터링:\n"
+            "  뉴스 종목 AI 지목 → 1분 집중 감시 🎯\n"
+            "  시장 전체 스캔 → 10분 주기\n\n"
+            f"💡 현재 상태:\n"
+            f"  알림: {'⏸️ 일시정지' if self.notifications_paused else '▶️ 활성화'}\n"
+            f"  집중 감시 (US): {len(self.momentum.dynamic_tickers_us)}개\n"
+            f"  집중 감시 (KR): {len(self.momentum.dynamic_tickers_kr)}개\n\n"
             f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
     async def cmd_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.notifications_paused = True
-        await update.message.reply_text("⏸️ 알림 일시 정지\n\n💡 /resume으로 재개")
+        await update.message.reply_text(
+            "⏸️ 알림이 일시 정지되었습니다.\n\n"
+            "💡 /resume 으로 재개"
+        )
         logger.info("⏸️ 알림 일시 정지")
 
     async def cmd_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.notifications_paused = False
-        await update.message.reply_text("▶️ 알림 재개!\n\n🐺 Beast Mode 가동!")
+        await update.message.reply_text(
+            "▶️ 알림이 다시 시작되었습니다!\n\n"
+            "• 뉴스 알림: 활성화\n"
+            "• 급등 알림: 활성화\n\n"
+            "🐺 Beast Mode 가동!"
+        )
         logger.info("▶️ 알림 재개")
 
     async def cmd_analyze(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not context.args:
             await update.message.reply_text(
-                "사용법:\n/analyze 삼성전자\n/analyze AAPL\n/analyze 005930"
+                "사용법:\n"
+                "/analyze 삼성전자\n"
+                "/analyze AAPL\n"
+                "/analyze 005930"
             )
             return
 
@@ -157,82 +173,71 @@ class TelegramBot:
                 '카카오': '035720.KS',
             }
 
-            symbol = ticker_map.get(ticker.lower(), f"{ticker}.KS" if ticker.isdigit() else ticker.upper())
-            stock  = yf.Ticker(symbol)
-            # prepost=True
-            hist   = stock.history(period='5d', prepost=True)
+            symbol = ticker_map.get(ticker.lower())
+            if not symbol:
+                symbol = f"{ticker}.KS" if ticker.isdigit() else ticker.upper()
+
+            stock = yf.Ticker(symbol)
+            hist  = stock.history(period='5d', prepost=True)
 
             if hist.empty:
                 await update.message.reply_text(f"⚠️ {ticker} 데이터를 찾을 수 없습니다.")
                 return
 
-            current      = hist['Close'].iloc[-1]
-            prev         = hist['Close'].iloc[-2] if len(hist) > 1 else current
-            change       = current - prev
-            change_pct   = (change / prev) * 100 if prev != 0 else 0
-            volume       = hist['Volume'].iloc[-1]
-            avg_volume   = hist['Volume'].mean()
-            volume_ratio = volume / avg_volume if avg_volume > 0 else 0
+            current    = hist['Close'].iloc[-1]
+            prev       = hist['Close'].iloc[-2] if len(hist) > 1 else current
+            change     = current - prev
+            change_pct = (change / prev) * 100 if prev != 0 else 0
+            volume     = hist['Volume'].iloc[-1]
+            avg_vol    = hist['Volume'].mean()
+            vol_ratio  = volume / avg_vol if avg_vol > 0 else 0
 
-            msg = (
-                f"📊 {ticker} 분석 결과\n\n"
-                f"현재가: {current:,.2f} ({change:+.2f}, {change_pct:+.2f}%)\n"
-                f"거래량: {volume:,.0f} (평균 대비 {volume_ratio:.1f}배)\n\n"
-                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            )
+            msg  = f"📊 {ticker} 분석 결과\n\n"
+            msg += f"현재가: {current:,.2f} ({change:+.2f}, {change_pct:+.2f}%)\n"
+            msg += f"거래량: {volume:,.0f} (평균 대비 {vol_ratio:.1f}배)\n\n"
+            msg += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             await update.message.reply_text(msg)
 
         except Exception as e:
             logger.error(f"/analyze 오류: {e}")
-            await update.message.reply_text(f"⚠️ 분석 중 오류: {str(e)}")
+            await update.message.reply_text(f"⚠️ 분석 중 오류 발생: {str(e)}")
 
     async def cmd_report(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📊 리포트 생성 중...")
         try:
-            report = await self.predictor.generate_daily_report('US')
-            await update.message.reply_text(self._format_daily_report(report, '🇺🇸 미국'))
+            us_report = await self.predictor.generate_daily_report('US')
+            us_msg    = self._format_daily_report(us_report, '🇺🇸 미국')
+            await update.message.reply_text(us_msg)
         except Exception as e:
-            logger.error(f"/report 오류: {e}")
+            logger.error(f"리포트 생성 오류: {e}")
             await update.message.reply_text(f"⚠️ 리포트 생성 실패: {str(e)}")
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
-            phase = self.momentum._get_market_phase_kst()
-            time_status = {
-                'premarket': '🌅 프리마켓 (18:00~23:30 KST)',
-                'regular': '🏛️ 정규장 (23:30~06:00 KST)',
-                'afterhours': '🌙 애프터마켓 (06:00~18:00 KST)',
-            }[phase]
-            
-            msg = (
-                "🐺 시스템 상태 v3.6 (TradingView 연동)\n\n"
-                f"알림: {'⏸️ 일시정지' if self.notifications_paused else '▶️ 활성화'}\n"
-                f"🕐 현재 시간대: {time_status}\n\n"
-                "AI Brain\n"
-                f"✅ 페르소나: 공격적 스캘퍼\n"
-                f"✅ 모델: {', '.join(self.ai.scanner_models[:2])}\n\n"
-                "News Engine\n"
-                f"✅ 소스: {len(self.news_engine.sources)}개\n"
-                f"✅ 중복 체크: {len(self.news_engine.seen_urls)}개\n\n"
-                "Momentum Tracker v3.6\n"
-                f"✅ TradingView 시간대별 자동 분기 (KST)\n"
-                f"✅ Finviz: curl_cffi (Chrome TLS 위장)\n"
-                f"✅ 동적 컬럼 매핑 활성화\n"
-                f"✅ prepost=True (장전 감시)\n"
-                f"✅ US 동적 감시: {len(self.momentum.dynamic_tickers_us)}개\n"
-                f"✅ KR 동적 감시: {len(self.momentum.dynamic_tickers_kr)}개\n\n"
-                "시간대별 정책:\n"
-                f"• 프리마켓: TradingView 단독\n"
-                f"• 정규장: Finviz → TradingView 백업\n"
-                f"• 애프터마켓: TradingView 단독\n\n"
-                "백그라운드\n"
-                "✅ 뉴스 수집: 30초\n"
-                "✅ 뉴스 종목 감시: 1분\n"
-                "✅ 시장 전체 스캔: 10분 (시간대별 분기)\n"
-                "✅ 리포트: 23:00\n\n"
-                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            )
+            status_emoji = "⏸️ 일시정지" if self.notifications_paused else "▶️ 활성화"
+
+            msg  = "🚀 시스템 상태 (Production)\n\n"
+            msg += f"알림: {status_emoji}\n\n"
+            msg += f"🧠 AI Brain\n"
+            msg += f"  ✅ 모델: {', '.join(self.ai.scanner_models[:2])}\n"
+            msg += f"  ✅ top_ticker 연동: 활성화\n\n"
+            msg += f"📰 News Engine\n"
+            msg += f"  ✅ 소스: {len(self.news_engine.sources)}개\n"
+            msg += f"  ✅ 중복 체크: {len(self.news_engine.seen_urls)}개\n\n"
+            msg += f"📊 Momentum Tracker\n"
+            msg += f"  ✅ Finviz: curl_cffi TLS 위장\n"
+            msg += f"  ✅ 집중 감시 US: {len(self.momentum.dynamic_tickers_us)}개\n"
+            msg += f"  ✅ 집중 감시 KR: {len(self.momentum.dynamic_tickers_kr)}개\n"
+            msg += f"  ✅ 총 알림: {self.momentum.stats['total_alerts']}건\n\n"
+            msg += f"⏱️ 스캔 주기\n"
+            msg += f"  ✅ 뉴스: 30초\n"
+            msg += f"  ✅ 미국 AI 지목 종목: 1분 🎯\n"
+            msg += f"  ✅ 한국 전체: 2분\n"
+            msg += f"  ❌ 미국 전체: OFF (노이즈 제거)\n\n"
+            msg += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
             await update.message.reply_text(msg)
+
         except Exception as e:
             logger.error(f"/status 오류: {e}")
             await update.message.reply_text(f"⚠️ 상태 조회 실패: {str(e)}")
@@ -264,39 +269,45 @@ class TelegramBot:
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
-            "📚 조기경보 시스템 v3.6 (TradingView 시간대별 분기)\n\n"
+            "📚 조기경보 시스템 Production\n\n"
             "📱 명령어:\n"
-            "• /start   - 메뉴판\n"
-            "• /analyze - 종목 분석\n"
-            "• /report  - 즉시 리포트\n"
-            "• /status  - 시스템 상태\n"
-            "• /stats   - 알림 통계\n"
-            "• /news    - 최근 뉴스 TOP 5\n"
-            "• /pause   - 알림 일시 정지\n"
-            "• /resume  - 알림 재개\n"
-            "• /help    - 이 도움말\n\n"
+            "• /start - 메뉴판\n"
+            "• /analyze 종목명 - 종목 분석\n"
+            "• /report - 즉시 리포트\n"
+            "• /status - 시스템 상태\n"
+            "• /stats - 📊 알림 통계\n"
+            "• /news - 최근 뉴스 TOP 5\n"
+            "• /pause - 알림 일시 정지\n"
+            "• /resume - 알림 재개\n"
+            "• /help - 이 도움말\n\n"
             "⏰ 자동 알림:\n"
             "• 23:00 - 미국장 저녁 브리핑\n"
-            "• 장중  - 뉴스 수집 (30초)\n"
-            "• 장중  - 뉴스 종목 감시 (1분)\n"
-            "• 장중  - 시장 전체 스캔 (10분, 시간대별 분기)\n\n"
-            "🚀 v3.6 시간대별 정책 (KST 기준):\n"
-            "• 프리마켓 (18:00~23:30): TradingView 단독\n"
-            "• 정규장 (23:30~06:00): Finviz → TradingView 백업\n"
-            "• 애프터마켓 (06:00~18:00): TradingView 단독\n\n"
-            "🎯 24시간 빈틈없는 급등주 포착!"
+            "• 30초 - 실시간 뉴스 스캔\n"
+            "• 1분  - AI 지목 종목 집중 감시 🎯 (미국)\n"
+            "• 2분  - 한국 전체 급등주 스캔\n\n"
+            "⚡ AI 대장주 연동:\n"
+            "• 호재 뉴스 → AI가 top_ticker 지목\n"
+            "• 즉시 1분 집중 감시 등록\n"
+            "• 급등 초입 포착 알림\n\n"
+            "🔥 알림 우선순위:\n"
+            "  🚨🚨🚨 CRITICAL: AI 지목 + 20%↑ + 거래량 10배\n"
+            "  🔥🔥   HIGH: AI 지목 종목 급등\n"
+            "  🔥     MEDIUM: 시장 전체 급등\n"
+            "  📊     LOW: 프로그램/테마\n\n"
+            "🎯 RIME 급등주 선취매!"
         )
 
     async def cmd_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
-            await update.message.reply_text(self.momentum.get_stats_summary())
+            stats_text = self.momentum.get_stats_summary()
+            await update.message.reply_text(stats_text)
         except Exception as e:
             logger.error(f"/stats 오류: {e}")
             await update.message.reply_text(f"⚠️ 통계 조회 실패: {str(e)}")
 
-    # ─────────────────────────────────────────────
-    # 백그라운드 작업
-    # ─────────────────────────────────────────────
+    # ────────────────────────────────────────────
+    # 스케줄러 / 모니터
+    # ────────────────────────────────────────────
     async def schedule_reports(self):
         logger.info("📅 스케줄러 시작")
         while True:
@@ -321,9 +332,10 @@ class TelegramBot:
     async def news_monitor(self):
         """
         뉴스 모니터 (30초 주기)
-        AI가 분석한 top_ticker를 즉시 모멘텀 트래커 동적 감시 목록에 추가 → 1분 집중 감시
+        ✅ top_ticker 연동: AI가 지목한 대장주를 즉시 1분 집중 감시 등록
         """
         logger.info("📰 뉴스 모니터 시작")
+
         while True:
             try:
                 if self.notifications_paused:
@@ -334,43 +346,41 @@ class TelegramBot:
 
                 for news in news_list[:5]:
                     try:
-                        # 1차 빠른 필터
                         passes_quick = await self.ai.quick_score(news['title'], threshold=8.0)
                         if not passes_quick:
                             continue
 
-                        # 2차 상세 분석
                         analysis = await self.ai.analyze_news_signal(news)
                         if not analysis:
                             continue
 
                         market = news.get('market', 'US')
 
-                        # ✅ [핵심] AI가 지목한 1등 대장주 top_ticker → 즉시 동적 감시 추가
+                        # ✅ [핵심] AI가 직접 지목한 대장주 → 즉시 1분 집중 감시 등록
                         top_ticker = analysis.get('top_ticker')
-                        top_market = analysis.get('top_ticker_market', market)
-                        if top_ticker and top_ticker not in (None, 'null', 'UNKNOWN', ''):
-                            self.momentum.add_dynamic_ticker(top_ticker, top_market)
-                            logger.info(f"🎯 AI 대장주 동적 감시 등록: {top_ticker} ({top_market})")
+                        if top_ticker:
+                            self.momentum.add_dynamic_ticker(top_ticker, market)
+                            logger.info(f"🎯 AI 대장주 집중 감시 등록: {top_ticker} ({market})")
 
                         # 뉴스에 명시된 종목도 추가
                         ticker_in_news = analysis.get('ticker_in_news')
-                        if ticker_in_news and ticker_in_news not in (None, 'null', 'UNKNOWN', ''):
+                        if ticker_in_news and ticker_in_news != 'null':
                             self.momentum.add_dynamic_ticker(ticker_in_news, market)
 
-                        # 추천 종목 2등, 3등도 추가
-                        for rec in analysis.get('recommendations', [])[1:3]:
-                            t = rec.get('ticker', 'UNKNOWN')
-                            if t and t not in ('UNKNOWN', '', None):
-                                self.momentum.add_dynamic_ticker(t, market)
+                        # AI 추천 종목도 추가 (최대 3개)
+                        for rec in analysis.get('recommendations', [])[:3]:
+                            rec_ticker = rec.get('ticker', 'UNKNOWN')
+                            if rec_ticker not in ('UNKNOWN', '', None):
+                                self.momentum.add_dynamic_ticker(rec_ticker, market)
 
-                        # 알림 전송
+                        # 알림 발송
                         msg = self._format_news_alert(news, analysis)
                         await self.send_message(msg)
                         await asyncio.sleep(random.uniform(0.8, 1.2))
 
                     except Exception as e:
                         logger.debug(f"뉴스 처리 오류: {e}")
+                        continue
 
                 await asyncio.sleep(random.uniform(25, 35))
 
@@ -379,89 +389,101 @@ class TelegramBot:
                 await asyncio.sleep(random.uniform(55, 65))
 
     async def momentum_monitor_dynamic(self):
-        """뉴스 종목 집중 감시 (1분 주기)"""
-        logger.info("🔥 뉴스 종목 감시 시작 (1분 주기)")
+        """AI 지목 + 뉴스 종목 집중 감시 (1분 주기)"""
+        logger.info("🎯 AI 지목 종목 집중 감시 시작 (1분 주기)")
+
         while True:
             try:
                 if self.notifications_paused:
                     await asyncio.sleep(random.uniform(55, 65))
                     continue
 
-                for market in ('US', 'KR'):
-                    signals = await self.momentum.scan_momentum(market, mode='dynamic')
-                    for signal in signals:
-                        await self.send_message(self._format_momentum_alert(signal))
-                        await asyncio.sleep(random.uniform(0.8, 1.2))
+                # 미국 AI 지목 종목
+                us_signals = await self.momentum.scan_momentum('US', mode='dynamic')
+                for signal in us_signals:
+                    await self.send_message(self._format_momentum_alert(signal))
+                    await asyncio.sleep(random.uniform(0.8, 1.2))
+
+                # 한국 AI 지목 종목
+                kr_signals = await self.momentum.scan_momentum('KR', mode='dynamic')
+                for signal in kr_signals:
+                    await self.send_message(self._format_momentum_alert(signal))
+                    await asyncio.sleep(random.uniform(0.8, 1.2))
 
                 await asyncio.sleep(random.uniform(55, 65))
 
             except Exception as e:
-                logger.error(f"뉴스 종목 감시 오류: {e}")
+                logger.error(f"집중 감시 오류: {e}")
                 await asyncio.sleep(random.uniform(55, 65))
 
     async def momentum_monitor_full(self):
-        """시장 전체 스캔 (10분 주기)"""
-        logger.info("📊 시장 전체 스캔 시작 (10분 주기)")
+        """
+        한국 전체 스캔 ONLY (2분 주기)
+        ✅ 미국 전체 스캔 제거 (동적 모멘텀만 유지)
+        ✅ 한국 10분 → 2분으로 변경
+        """
+        logger.info("📊 한국 전체 스캔 시작 (2분 주기)")
+
         while True:
             try:
                 if self.notifications_paused:
-                    await asyncio.sleep(random.uniform(580, 620))
+                    await asyncio.sleep(random.uniform(115, 125))
                     continue
 
-                for market in ('US', 'KR'):
-                    signals = await self.momentum.scan_momentum(market, mode='full')
-                    for signal in signals:
-                        await self.send_message(self._format_momentum_alert(signal))
-                        await asyncio.sleep(random.uniform(0.8, 1.2))
+                # ✅ 미국 전체 스캔 완전 제거 (동적 모멘텀만 유지)
+                # us_signals = await self.momentum.scan_momentum('US', mode='full')  # 삭제!
 
-                # 메모리 정리 (전체 스캔마다)
+                # ✅ 한국만 스캔 (2분 주기)
+                kr_signals = await self.momentum.scan_momentum('KR', mode='full')
+                for signal in kr_signals:
+                    await self.send_message(self._format_momentum_alert(signal))
+                    await asyncio.sleep(random.uniform(0.8, 1.2))
+
+                # 메모리 정리
                 self.momentum.cleanup_alerts()
 
-                await asyncio.sleep(random.uniform(580, 620))
+                # ✅ 2분 주기 (115~125초)
+                await asyncio.sleep(random.uniform(115, 125))
 
             except Exception as e:
-                logger.error(f"시장 전체 스캔 오류: {e}")
-                await asyncio.sleep(random.uniform(580, 620))
+                logger.error(f"한국 전체 스캔 오류: {e}")
+                await asyncio.sleep(random.uniform(115, 125))
 
-    # ─────────────────────────────────────────────
+    # ────────────────────────────────────────────
     # 메시지 포맷
-    # ─────────────────────────────────────────────
+    # ────────────────────────────────────────────
     def _format_news_alert(self, news: dict, analysis: dict) -> str:
-        score        = analysis.get('score', 0)
-        certainty    = analysis.get('certainty', 'uncertain')
-        summary      = analysis.get('summary', '')
+        score       = analysis.get('score', 0)
+        certainty   = analysis.get('certainty', 'uncertain')
+        summary     = analysis.get('summary', '')
         key_catalyst = analysis.get('key_catalyst', '')
-        top_ticker   = analysis.get('top_ticker')
-        cert_emoji   = "✅" if certainty == "confirmed" else "⚠️"
+        top_ticker  = analysis.get('top_ticker')
 
-        msg = (
-            f"🔥 급등 가능성 {score}/10\n"
-            f"{cert_emoji} {certainty.upper()}\n\n"
-            f"📰 {news['title']}\n\n"
-            f"💡 {summary}\n"
-            f"🎯 재료: {key_catalyst}\n"
-        )
+        cert_emoji = "✅" if certainty == "confirmed" else "⚠️"
 
-        # AI 대장주 강조
-        if top_ticker and top_ticker not in (None, 'null', 'UNKNOWN', ''):
-            top_market = analysis.get('top_ticker_market', 'US')
-            msg += f"\n🎯 AI 대장주: {top_ticker} ({top_market}) → 1분 집중 감시 시작\n"
+        msg  = f"🔥 급등 가능성 {score}/10\n"
+        msg += f"{cert_emoji} {certainty.upper()}\n\n"
+        msg += f"📰 {news['title']}\n\n"
+        msg += f"💡 {summary}\n"
+        msg += f"🎯 재료: {key_catalyst}\n\n"
 
-        recs = analysis.get('recommendations', [])
-        if recs:
-            msg += "\n📊 수혜주:\n"
-            for rec in recs[:3]:
+        # ✅ AI 대장주 표시
+        if top_ticker:
+            msg += f"👑 AI 대장주: {top_ticker} → 1분 집중 감시 등록!\n\n"
+
+        recommendations = analysis.get('recommendations', [])
+        if recommendations:
+            msg += "📊 수혜주:\n"
+            for rec in recommendations[:3]:
+                rank   = rec.get('rank', '')
                 ticker = rec.get('ticker', 'UNKNOWN')
                 name   = rec.get('name', 'Unknown')
                 reason = rec.get('reason', '')
-                rank   = rec.get('rank', '')
                 msg += f"  {rank}: {name} ({ticker})\n"
                 msg += f"  → {reason}\n"
 
-        msg += (
-            f"\n🔗 {news.get('url', 'N/A')}\n"
-            f"⏰ {news.get('published_time_kst', 'N/A')}"
-        )
+        msg += f"\n🔗 {news.get('url', 'N/A')}\n"
+        msg += f"⏰ {news.get('published_time_kst', 'N/A')}"
         return msg
 
     def _format_momentum_alert(self, signal: dict) -> str:
@@ -473,36 +495,40 @@ class TelegramBot:
         market       = signal.get('market', 'US')
         source       = signal.get('source', '')
 
-        priority_emoji = signal.get('priority_emoji', '🔥')
-        market_flag    = "🇺🇸" if market == 'US' else "🇰🇷"
-        source_text    = f" [{source.upper()}]" if source else ""
+        # 우선순위 이모지 (없으면 alert_type 기반 fallback)
+        priority_emoji = signal.get('priority_emoji')
+        if not priority_emoji:
+            priority_emoji = "🔥🔥" if signal.get('alert_type') == 'dynamic_surge' else "🔥"
 
-        return (
-            f"{priority_emoji} 급등 포착!{source_text}\n\n"
-            f"{market_flag} {name} ({ticker})\n"
-            f"💹 {change_pct:+.1f}%\n"
-            f"📈 거래량 {volume_ratio:.1f}배\n\n"
-            f"💡 {reason}\n"
-            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
-        )
+        market_flag = "🇺🇸" if market == 'US' else "🇰🇷"
+
+        source_text = f" [{source.upper()}]" if source else ""
+
+        msg  = f"{priority_emoji} 급등 포착!{source_text}\n\n"
+        msg += f"{market_flag} {name} ({ticker})\n"
+        msg += f"💹 {change_pct:+.1f}%\n"
+        msg += f"📈 거래량 {volume_ratio:.1f}배\n\n"
+        msg += f"💡 {reason}\n"
+        msg += f"⏰ {datetime.now().strftime('%H:%M:%S')}"
+        return msg
 
     def _format_daily_report(self, report: dict, title: str) -> str:
-        msg = (
-            f"━━━━━━━━━━━━━━━━\n"
-            f"{title}\n"
-            f"📅 {report['date'].strftime('%Y-%m-%d')}\n"
-            f"━━━━━━━━━━━━━━━━\n\n"
-        )
+        msg  = f"━━━━━━━━━━━━━━━━\n"
+        msg += f"{title}\n"
+        msg += f"📅 {report['date'].strftime('%Y-%m-%d')}\n"
+        msg += f"━━━━━━━━━━━━━━━━\n\n"
 
         events = report.get('events_today', [])
         if events:
             msg += f"📋 주요 이벤트 ({len(events)}건)\n\n"
             for event in events[:5]:
-                msg += (
-                    f"• {event.get('name', 'Unknown')} ({event.get('ticker', 'UNKNOWN')})\n"
-                    f"  {event.get('reason', '')}\n"
-                    f"  신뢰도: {event.get('confidence', 0)*100:.0f}%\n\n"
-                )
+                ticker     = event.get('ticker', 'UNKNOWN')
+                name       = event.get('name', 'Unknown')
+                reason     = event.get('reason', '')
+                confidence = event.get('confidence', 0)
+                msg += f"• {name} ({ticker})\n"
+                msg += f"  {reason}\n"
+                msg += f"  신뢰도: {confidence*100:.0f}%\n\n"
         else:
             msg += "📭 주요 이벤트 없음\n\n"
 
@@ -514,9 +540,9 @@ class TelegramBot:
 
         return msg
 
-    # ─────────────────────────────────────────────
+    # ────────────────────────────────────────────
     # 메시지 전송
-    # ─────────────────────────────────────────────
+    # ────────────────────────────────────────────
     async def send_message(self, text: str):
         try:
             await self.app.bot.send_message(
@@ -527,6 +553,9 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"메시지 전송 실패: {e}")
 
+    # ────────────────────────────────────────────
+    # 메인 루프
+    # ────────────────────────────────────────────
     async def run_forever(self):
         try:
             await self.start()

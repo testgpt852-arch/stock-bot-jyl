@@ -1,4 +1,4 @@
-# 조기경보 시스템 (Production)
+# 조기경보 시스템 Production - Requirements
 
 # Telegram
 python-telegram-bot==21.0
@@ -8,14 +8,14 @@ telegram==0.0.1
 google-genai==0.2.2
 
 # 데이터 수집
-curl-cffi==0.7.0          # Finviz 보안 우회 (Chrome TLS 위장), News Engine에도 사용
-aiohttp==3.9.3             # Yahoo screener, Naver, yfinance fallback
-beautifulsoup4==4.12.0
-feedparser==6.0.11
-yfinance==0.2.52
-lxml
+curl-cffi==0.7.0        # Finviz Cloudflare 우회 (TLS 지문 위장)
+aiohttp==3.9.3          # 비동기 HTTP
+beautifulsoup4==4.12.0  # HTML 파싱
+feedparser==6.0.11      # RSS
+yfinance==0.2.52        # Yahoo Finance
+lxml                    # XML/HTML 파서
 
 # 유틸리티
 python-dotenv==1.0.0
 pytz==2024.1
-python-dateutil==2.8.2    # SEC 공시 시간 파싱
+python-dateutil==2.8.2  # SEC 공시 시간 파싱용
