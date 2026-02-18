@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Momentum Tracker - Production
+Momentum Tracker - Production v3.5 (프리마켓 스캐너 탑재)
 - [핵심] curl_cffi AsyncSession(impersonate="chrome110") 으로 Finviz 크롤링
 - 동적 컬럼 매핑 (헤더 텍스트 기반, 고정 인덱스 제거)
 - yfinance prepost=True (장전 데이터 포함)
@@ -8,6 +8,7 @@ Momentum Tracker - Production
 - 알림 우선순위 (CRITICAL / HIGH / MEDIUM / LOW)
 - 다중 fallback: Finviz → Yahoo → yfinance
 - 이중 스캔 모드: 뉴스 종목 1분 / 시장 전체 10분
+- 🚀 v3.5 신규: 프리마켓 전용 스캐너 (소형주 급등 포착)
 """
 
 import asyncio
@@ -19,6 +20,7 @@ from bs4 import BeautifulSoup
 import yfinance as yf
 import re
 import random
+import pytz
 from curl_cffi.requests import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -68,6 +70,7 @@ class MomentumTracker:
             'finviz_success':  0,
             'yahoo_success':   0,
             'yfinance_success': 0,
+            'tradingview_success': 0,  # 🚀 v3.6: TradingView 크롤링 성공 횟수
             'avg_change_pct':  0.0,
             'max_change_pct':  0.0,
             'session_start':   datetime.now(),
@@ -100,6 +103,32 @@ class MomentumTracker:
 
     async def _random_delay(self, base=1.0, jitter=0.5):
         await asyncio.sleep(max(0.1, base + random.uniform(-jitter, jitter)))
+
+    def _get_market_phase_kst(self) -> str:
+        """
+        🚀 v3.6: KST 기준 시간대 판단 (TradingView 연동)
+        - 프리마켓: 18:00 ~ 23:30 KST
+        - 정규장: 23:30 ~ 익일 06:00 KST
+        - 애프터마켓/기타: 06:00 ~ 18:00 KST
+        
+        Returns:
+            'premarket', 'regular', 'afterhours'
+        """
+        kst_tz = pytz.timezone('Asia/Seoul')
+        now_kst = datetime.now(kst_tz)
+        hour = now_kst.hour
+        minute = now_kst.minute
+        
+        # 프리마켓: 18:00 ~ 23:30 KST
+        if (hour == 18 and minute >= 0) or (hour > 18 and hour < 23) or (hour == 23 and minute < 30):
+            return 'premarket'
+        
+        # 정규장: 23:30 ~ 익일 06:00 KST
+        if (hour == 23 and minute >= 30) or (hour >= 0 and hour < 6):
+            return 'regular'
+        
+        # 애프터마켓/기타: 06:00 ~ 18:00 KST
+        return 'afterhours'
 
     # ─────────────────────────────────────────────
     # 동적 종목 관리
@@ -199,10 +228,20 @@ class MomentumTracker:
         uptime = datetime.now() - self.stats['session_start']
         h = int(uptime.total_seconds() // 3600)
         m = int((uptime.total_seconds() % 3600) // 60)
+        
+        # 🚀 v3.6: 현재 시간대 표시 (KST 기준)
+        phase = self._get_market_phase_kst()
+        time_status = {
+            'premarket': '🌅 프리마켓 (18:00~23:30 KST)',
+            'regular': '🏛️ 정규장 (23:30~06:00 KST)',
+            'afterhours': '🌙 애프터마켓 (06:00~18:00 KST)',
+        }[phase]
+        
         return (
-            f"📊 Momentum Tracker 통계\n"
+            f"📊 Momentum Tracker v3.6 통계\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"⏱️ 실행 시간: {h}h {m}m\n"
+            f"🕐 현재 시간대: {time_status}\n"
             f"🔔 총 알림: {self.stats['total_alerts']}건\n"
             f"  🇺🇸 US: {self.stats['us_alerts']}건\n"
             f"  🇰🇷 KR: {self.stats['kr_alerts']}건\n"
@@ -215,6 +254,7 @@ class MomentumTracker:
             f"🏆 최고 등락률: {self.stats['max_change_pct']:.1f}%\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"📡 데이터 소스 성공:\n"
+            f"  TradingView: {self.stats['tradingview_success']}회\n"
             f"  Finviz:   {self.stats['finviz_success']}회\n"
             f"  Yahoo:    {self.stats['yahoo_success']}회\n"
             f"  yfinance: {self.stats['yfinance_success']}회\n"
@@ -369,49 +409,218 @@ class MomentumTracker:
         return signals
 
     # ─────────────────────────────────────────────
-    # 미국 전체 스캔 (다중 fallback)
+    # 🚀 v3.6: TradingView 크롤링 (시간대별 3종)
+    # ─────────────────────────────────────────────
+    async def _scan_tradingview(self, phase: str) -> list:
+        """
+        🚀 v3.6 신규: TradingView 급등주 크롤링
+        
+        Args:
+            phase: 'premarket', 'regular', 'afterhours'
+        
+        Returns:
+            signals: 급등주 리스트
+        """
+        signals = []
+        
+        # 시간대별 URL 매핑
+        url_map = {
+            'premarket': 'https://kr.tradingview.com/markets/stocks-usa/market-movers-pre-market-gainers/',
+            'regular': 'https://kr.tradingview.com/markets/stocks-usa/market-movers-gainers/',
+            'afterhours': 'https://kr.tradingview.com/markets/stocks-usa/market-movers-after-hours-gainers/',
+        }
+        
+        phase_emoji = {
+            'premarket': '🌅',
+            'regular': '🏛️',
+            'afterhours': '🌙',
+        }
+        
+        url = url_map.get(phase)
+        if not url:
+            logger.error(f"알 수 없는 phase: {phase}")
+            return signals
+        
+        try:
+            # curl_cffi로 TradingView 크롤링 (Chrome TLS 위장)
+            async with AsyncSession(impersonate="chrome110") as session:
+                await self._random_delay(1.0, 0.3)
+                
+                response = await session.get(url, timeout=15)
+                
+                if response.status_code != 200:
+                    logger.warning(f"TradingView {phase} 접근 실패: {response.status_code}")
+                    return signals
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # TradingView 테이블 파싱
+                # <table> 내 <tbody> > <tr> 구조
+                table = soup.find('table')
+                if not table:
+                    logger.warning(f"TradingView {phase} 테이블 없음")
+                    return signals
+                
+                tbody = table.find('tbody')
+                if not tbody:
+                    logger.warning(f"TradingView {phase} tbody 없음")
+                    return signals
+                
+                rows = tbody.find_all('tr')
+                logger.info(f"{phase_emoji[phase]} TradingView {phase}: {len(rows)}개 행 발견")
+                
+                for row in rows[:50]:  # 상위 50개
+                    try:
+                        cols = row.find_all('td')
+                        if len(cols) < 3:
+                            continue
+                        
+                        # ✅ Gemini 제공 티커 추출 로직 (검증됨)
+                        # 티커 절삭: 공백 분리 -> 하이픈 분리 -> 콤마 제거
+                        full_text = cols[0].get_text(" ", strip=True)
+                        ticker = full_text.split()[0].split('-')[0].replace(',', '').strip()
+                        
+                        if not ticker or len(ticker) > 5:  # 티커는 보통 1~5자
+                            continue
+                        
+                        # 등락률 파싱
+                        change_txt = cols[1].get_text(strip=True).replace('%', '').replace('+', '')
+                        try:
+                            change_pct = float(change_txt)
+                        except ValueError:
+                            continue
+                        
+                        # 가격 파싱
+                        price_txt = cols[2].get_text(strip=True).upper().replace('USD', '').strip()
+                        try:
+                            price = float(price_txt)
+                        except ValueError:
+                            continue
+                        
+                        # 필터: 등락률 10% 이상
+                        if change_pct < self.min_price_change:
+                            continue
+                        
+                        # 중복 체크
+                        alert_key = f"{ticker}_{datetime.now().date()}_{phase}"
+                        if alert_key in self.seen_surge:
+                            continue
+                        self.seen_surge.add(alert_key)
+                        
+                        signal = {
+                            'ticker': ticker,
+                            'name': ticker,  # TradingView는 회사명 제공 안 함
+                            'market': 'US',
+                            'price': price,
+                            'change_percent': change_pct,
+                            'volume': 0,  # TradingView는 거래량 정보 없음
+                            'volume_ratio': 0,
+                            'signals': [f'{phase.upper()} {change_pct:.1f}%'],
+                            'reason': f'{phase_emoji[phase]} TradingView {phase} 급등 ({change_pct:.1f}%)',
+                            'timestamp': datetime.now(),
+                            'alert_type': f'{phase}_surge',
+                            'source': f'tradingview_{phase}',
+                        }
+                        
+                        signal = self._assign_priority(signal, is_dynamic=False)
+                        self._update_stats(signal)
+                        signals.append(signal)
+                        
+                        logger.info(f"{signal['priority_emoji']} TradingView {phase}: {ticker} +{change_pct:.1f}%")
+                        
+                    except Exception as e:
+                        logger.debug(f"TradingView {phase} 행 파싱 오류: {e}")
+                        continue
+                
+        except Exception as e:
+            logger.error(f"TradingView {phase} 스캔 오류: {e}")
+        
+        if signals:
+            self.stats['tradingview_success'] += 1
+        
+        return signals
+
+    # ─────────────────────────────────────────────
+    # 미국 전체 스캔 (시간대별 분기 v3.6)
     # ─────────────────────────────────────────────
     async def _scan_realtime_surge_us(self) -> list:
-        """1차 Finviz → 2차 Yahoo → 3차 yfinance"""
-
-        # 1차: Finviz (curl_cffi)
-        try:
-            logger.info("1차 시도: Finviz (curl_cffi)")
-            signals = await self._scan_finviz()
-            if signals:
-                self.stats['finviz_success'] += 1
-                logger.info(f"✅ Finviz 성공: {len(signals)}개")
-                return signals
-            logger.warning("Finviz 결과 0개 → Yahoo 시도")
-        except Exception as e:
-            logger.warning(f"Finviz 실패: {e} → Yahoo 시도")
-
-        # 2차: Yahoo Finance
-        try:
-            logger.info("2차 시도: Yahoo Finance screener")
-            signals = await self._scan_yahoo_screener()
-            if signals:
-                self.stats['yahoo_success'] += 1
-                logger.info(f"✅ Yahoo 성공: {len(signals)}개")
-                return signals
-            logger.warning("Yahoo 결과 0개 → yfinance 시도")
-        except Exception as e:
-            logger.warning(f"Yahoo 실패: {e} → yfinance 시도")
-
-        # 3차: yfinance 직접 조회
-        try:
-            logger.info("3차 시도: yfinance API")
-            signals = await self._scan_yfinance_api()
-            if signals:
-                self.stats['yfinance_success'] += 1
-                logger.info(f"✅ yfinance 성공: {len(signals)}개")
-            else:
-                logger.error("⚠️ 모든 방법 실패: 미국 급등주 0개")
-            return signals
-        except Exception as e:
-            logger.error(f"yfinance API도 실패: {e}")
-
-        return []
+        """
+        🚀 v3.6: KST 기준 시간대별 데이터 소스 정책
+        
+        1. 프리마켓 (18:00~23:30 KST):
+           - TradingView 프리마켓 단독 (백업 없음)
+        
+        2. 정규장 (23:30~06:00 KST):
+           - 1순위: Finviz (안정적)
+           - 2순위: TradingView 정규장 (백업)
+        
+        3. 애프터마켓/기타 (06:00~18:00 KST):
+           - TradingView 애프터마켓 단독 (백업 없음)
+        """
+        
+        # 🚀 v3.6: KST 기준 시간대 판단
+        phase = self._get_market_phase_kst()
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 1. 프리마켓 (18:00~23:30 KST)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        if phase == 'premarket':
+            logger.info("🌅 프리마켓 시간대 (18:00~23:30 KST) → TradingView 프리마켓 단독")
+            try:
+                signals = await self._scan_tradingview('premarket')
+                if signals:
+                    logger.info(f"✅ TradingView 프리마켓 성공: {len(signals)}개")
+                    return signals
+                logger.info("TradingView 프리마켓: 조건 만족 종목 없음")
+            except Exception as e:
+                logger.error(f"TradingView 프리마켓 실패: {e}")
+            return []
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 2. 정규장 (23:30~06:00 KST)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        elif phase == 'regular':
+            logger.info("🏛️ 정규장 시간대 (23:30~06:00 KST) → Finviz 1순위, TradingView 백업")
+            
+            # 1순위: Finviz (안정적)
+            try:
+                logger.info("1순위: Finviz (curl_cffi)")
+                signals = await self._scan_finviz()
+                if signals:
+                    self.stats['finviz_success'] += 1
+                    logger.info(f"✅ Finviz 성공: {len(signals)}개")
+                    return signals
+                logger.warning("Finviz 결과 0개 → TradingView 백업 시도")
+            except Exception as e:
+                logger.warning(f"Finviz 실패: {e} → TradingView 백업 시도")
+            
+            # 2순위: TradingView 정규장 (백업)
+            try:
+                logger.info("2순위 백업: TradingView 정규장")
+                signals = await self._scan_tradingview('regular')
+                if signals:
+                    logger.info(f"✅ TradingView 정규장 백업 성공: {len(signals)}개")
+                    return signals
+                logger.error("⚠️ Finviz, TradingView 모두 결과 없음")
+            except Exception as e:
+                logger.error(f"TradingView 정규장 백업도 실패: {e}")
+            
+            return []
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 3. 애프터마켓/기타 (06:00~18:00 KST)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        else:  # afterhours
+            logger.info("🌙 애프터마켓 시간대 (06:00~18:00 KST) → TradingView 애프터마켓 단독")
+            try:
+                signals = await self._scan_tradingview('afterhours')
+                if signals:
+                    logger.info(f"✅ TradingView 애프터마켓 성공: {len(signals)}개")
+                    return signals
+                logger.info("TradingView 애프터마켓: 조건 만족 종목 없음")
+            except Exception as e:
+                logger.error(f"TradingView 애프터마켓 실패: {e}")
+            return []
 
     async def _scan_finviz(self) -> list:
         """

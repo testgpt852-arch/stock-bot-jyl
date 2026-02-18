@@ -69,19 +69,24 @@ class TelegramBot:
             logger.info("✅ 봇 시작")
 
             await self.send_message(
-                "🚀 조기경보 시스템 (Production) 시작\n\n"
+                "🚀 조기경보 시스템 v3.6 (TradingView 시간대별 분기)\n\n"
                 "✅ AI Brain (공격적 스캘퍼)\n"
                 "✅ News Engine (미국 5대장 + 한국 3대장 + SEC)\n"
-                "✅ Momentum Tracker (curl_cffi + prepost + 동적 매핑)\n"
+                "✅ Momentum Tracker v3.6 (TradingView 연동)\n"
                 "✅ Predictor Engine (SEC Only)\n\n"
                 "🔥 핵심 개선:\n"
                 "• Finviz: curl_cffi Chrome TLS 위장 (차단 방지)\n"
                 "• 컬럼: 동적 헤더 매핑 (인덱스 고정 제거)\n"
                 "• 장전 감시: yfinance prepost=True\n"
                 "• AI 대장주 → 즉시 1분 집중 감시 연동\n\n"
+                "🚀 v3.6 신규 기능 (TradingView 연동):\n"
+                "• 프리마켓 (18:00~23:30 KST): TradingView 단독\n"
+                "• 정규장 (23:30~06:00 KST): Finviz → TradingView 백업\n"
+                "• 애프터마켓 (06:00~18:00 KST): TradingView 단독\n"
+                "• KST 기준 시간대별 자동 분기\n\n"
                 "⏱️ 스캔 주기:\n"
                 "• 뉴스 종목: 1분 (집중 감시)\n"
-                "• 시장 전체: 10분\n"
+                "• 시장 전체: 10분 (시간대별 자동 분기)\n"
                 "• 뉴스 수집: 30초\n\n"
                 f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
@@ -94,8 +99,16 @@ class TelegramBot:
     # 명령어
     # ─────────────────────────────────────────────
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # 현재 시간대 표시 (KST 기준)
+        phase = self.momentum._get_market_phase_kst()
+        time_status = {
+            'premarket': '🌅 프리마켓 (18:00~23:30 KST)',
+            'regular': '🏛️ 정규장 (23:30~06:00 KST)',
+            'afterhours': '🌙 애프터마켓 (06:00~18:00 KST)',
+        }[phase]
+        
         await update.message.reply_text(
-            "🐺 조기경보 시스템 (Production)\n\n"
+            "🐺 조기경보 시스템 v3.6 (TradingView 시간대별 분기)\n\n"
             "📱 명령어:\n"
             "• /analyze [종목명] - 종목 분석\n"
             "• /report - 즉시 리포트\n"
@@ -105,6 +118,7 @@ class TelegramBot:
             "• /pause - 알림 일시 정지\n"
             "• /resume - 알림 재개\n"
             "• /help - 도움말\n\n"
+            f"🕐 현재 시간대: {time_status}\n"
             f"💡 알림: {'⏸️ 일시정지' if self.notifications_paused else '▶️ 활성화'}\n"
             f"🔍 US 동적 감시: {len(self.momentum.dynamic_tickers_us)}개\n"
             f"🔍 KR 동적 감시: {len(self.momentum.dynamic_tickers_kr)}개\n\n"
@@ -183,25 +197,38 @@ class TelegramBot:
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
+            phase = self.momentum._get_market_phase_kst()
+            time_status = {
+                'premarket': '🌅 프리마켓 (18:00~23:30 KST)',
+                'regular': '🏛️ 정규장 (23:30~06:00 KST)',
+                'afterhours': '🌙 애프터마켓 (06:00~18:00 KST)',
+            }[phase]
+            
             msg = (
-                "🐺 시스템 상태 (Production)\n\n"
-                f"알림: {'⏸️ 일시정지' if self.notifications_paused else '▶️ 활성화'}\n\n"
+                "🐺 시스템 상태 v3.6 (TradingView 연동)\n\n"
+                f"알림: {'⏸️ 일시정지' if self.notifications_paused else '▶️ 활성화'}\n"
+                f"🕐 현재 시간대: {time_status}\n\n"
                 "AI Brain\n"
                 f"✅ 페르소나: 공격적 스캘퍼\n"
                 f"✅ 모델: {', '.join(self.ai.scanner_models[:2])}\n\n"
                 "News Engine\n"
                 f"✅ 소스: {len(self.news_engine.sources)}개\n"
                 f"✅ 중복 체크: {len(self.news_engine.seen_urls)}개\n\n"
-                "Momentum Tracker\n"
+                "Momentum Tracker v3.6\n"
+                f"✅ TradingView 시간대별 자동 분기 (KST)\n"
                 f"✅ Finviz: curl_cffi (Chrome TLS 위장)\n"
                 f"✅ 동적 컬럼 매핑 활성화\n"
                 f"✅ prepost=True (장전 감시)\n"
                 f"✅ US 동적 감시: {len(self.momentum.dynamic_tickers_us)}개\n"
                 f"✅ KR 동적 감시: {len(self.momentum.dynamic_tickers_kr)}개\n\n"
+                "시간대별 정책:\n"
+                f"• 프리마켓: TradingView 단독\n"
+                f"• 정규장: Finviz → TradingView 백업\n"
+                f"• 애프터마켓: TradingView 단독\n\n"
                 "백그라운드\n"
                 "✅ 뉴스 수집: 30초\n"
                 "✅ 뉴스 종목 감시: 1분\n"
-                "✅ 시장 전체 스캔: 10분\n"
+                "✅ 시장 전체 스캔: 10분 (시간대별 분기)\n"
                 "✅ 리포트: 23:00\n\n"
                 f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
@@ -237,7 +264,7 @@ class TelegramBot:
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
-            "📚 조기경보 시스템 (Production)\n\n"
+            "📚 조기경보 시스템 v3.6 (TradingView 시간대별 분기)\n\n"
             "📱 명령어:\n"
             "• /start   - 메뉴판\n"
             "• /analyze - 종목 분석\n"
@@ -252,8 +279,12 @@ class TelegramBot:
             "• 23:00 - 미국장 저녁 브리핑\n"
             "• 장중  - 뉴스 수집 (30초)\n"
             "• 장중  - 뉴스 종목 감시 (1분)\n"
-            "• 장중  - 시장 전체 스캔 (10분)\n\n"
-            "🎯 RIME 급등주 선취매!"
+            "• 장중  - 시장 전체 스캔 (10분, 시간대별 분기)\n\n"
+            "🚀 v3.6 시간대별 정책 (KST 기준):\n"
+            "• 프리마켓 (18:00~23:30): TradingView 단독\n"
+            "• 정규장 (23:30~06:00): Finviz → TradingView 백업\n"
+            "• 애프터마켓 (06:00~18:00): TradingView 단독\n\n"
+            "🎯 24시간 빈틈없는 급등주 포착!"
         )
 
     async def cmd_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
