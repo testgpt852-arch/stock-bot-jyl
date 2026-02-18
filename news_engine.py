@@ -388,7 +388,15 @@ class NewsEngineV3:
                         continue
                     
                     self._register_news(title, link)
-                    
+
+                    # 🔧 회사명 추출: "8-K - Company Name (CIK번호) (Filer)" 형식에서 파싱
+                    # 예: "8-K - M Evo Global Acquisition Corp II (0002087361) (Filer)"
+                    #     → company_name = "M Evo Global Acquisition Corp II"
+                    company_name = ''
+                    company_match = re.search(r'8-K\s*-\s*(.+?)\s*\(\d+\)', title_tag.text.strip())
+                    if company_match:
+                        company_name = company_match.group(1).strip()
+
                     items.append({
                         'id': f"SEC_{link}",
                         'title': title,
@@ -396,6 +404,7 @@ class NewsEngineV3:
                         'source': 'SEC 8-K',
                         'market': 'US',
                         'type': 'filing',
+                        'company_name': company_name,   # 🔧 추가: AI에게 회사명 직접 전달
                         'timestamp': datetime.now(),
                         'published_timestamp': pub_time.timestamp(),
                         'published_time_kst': pub_time.strftime('%Y-%m-%d %H:%M:%S KST')
