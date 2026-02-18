@@ -76,6 +76,10 @@ class TelegramBot:
             await self.app.initialize()
             await self.app.start()
 
+            # ✅ [수정] 아래 코드를 반드시 추가해주세요! 
+            # 이 코드가 있어야 봇이 메시지를 수신하기 시작합니다.
+            await self.app.updater.start_polling(drop_pending_updates=True)
+
             # 백그라운드 태스크
             asyncio.create_task(self.schedule_reports())
             asyncio.create_task(self.news_monitor())
