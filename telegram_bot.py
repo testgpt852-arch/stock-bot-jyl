@@ -406,11 +406,22 @@ class TelegramBot:
 
                 for news in news_list[:5]:
                     try:
-                        passes_quick = await self.ai.quick_score(news['title'], threshold=8.0)
-                        if not passes_quick:
+                        # 🆕 AI 호출 없이 순수 키워드로 점수 계산 (Gemma 쿼터 절약)
+                        source    = news.get('source', '')
+                        kw_score  = Config.keyword_score(news['title'])
+                        threshold = Config.SOURCE_THRESHOLD.get(source, 7.0)
+
+                        logger.debug(
+                            f"키워드 점수: {kw_score:.0f} / threshold: {threshold} "
+                            f"| [{source}] {news['title'][:45]}"
+                        )
+                        if kw_score < threshold:
                             continue
 
-                        analysis = await self.ai.analyze_news_signal(news)
+                        # 🆕 min_score = threshold (소스 신뢰도 기반으로 AI 분석 기준도 완화)
+                        analysis = await self.ai.analyze_news_signal(
+                            news, min_score=int(threshold)
+                        )
                         if not analysis:
                             continue
 

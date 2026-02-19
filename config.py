@@ -353,6 +353,147 @@ class Config:
         '공시 안내', '정정 공시',
     ]
 
+    # ──────────────────────────────────────────────────────────
+    # 🆕 키워드 점수 테이블 (quick_score AI 호출 대체)
+    # 뉴스 제목에서 가장 높은 점수의 키워드를 찾아 반환
+    # 소스별 threshold와 함께 사용: score >= threshold 시 AI 분석 진행
+    # ──────────────────────────────────────────────────────────
+    KEYWORD_SCORES = {
+        # ── 10점: M&A 확정 (즉각 급등) ──────────────────────
+        'acquisition':          10, 'acquired by':          10,
+        'to be acquired':       10, 'agrees to acquire':    10,
+        'definitive agreement': 10, 'merger agreement':     10,
+        'buyout':               10, 'takeover':             10,
+        'tender offer':         10, 'all-cash offer':       10,
+        'going private':        10, 'take private':         10,
+        'merger':               10,
+        '인수합의':             10, '인수완료':             10,
+        '인수 합의':            10, '인수 완료':            10,   # 띄어쓰기 변형
+        '합병완료':             10, '합병 완료':            10,   # 띄어쓰기 변형
+        '경영권 인수':          10, '최대주주 변경':        10,
+        '공개매수':             10,
+
+        # ── 9점: FDA 승인, 대형 계약 확정 ───────────────────
+        'fda approval':         9, 'fda approved':          9,
+        'fda clearance':        9, 'fda grants':            9,
+        'breakthrough designation': 9,
+        'primary endpoint met': 9, 'met primary endpoint':  9,
+        'meets primary endpoint': 9, 'endpoint met':        9,
+        'achieved primary endpoint': 9,
+        'positive topline':     9, 'positive top-line':     9,
+        'positive data':        9, 'positive results':      9,
+        'contract win':         9, 'contract award':        9,
+        'awarded contract':     9, 'dod contract':          9,
+        '대규모 수주':          9, '독점 공급':             9,
+        '경영권 분쟁':          9, '역대 최대 계약':        9,
+        '최대 수주':            9, '최대 계약':             9,
+
+        # ── 8점: 임상 3상, 전략 대안 탐색, 주주환원 ─────────
+        'phase 3':              8, 'pivotal trial':         8,
+        'trial success':        8, 'successful trial':      8,
+        'exploring strategic alternatives': 8,
+        'explore strategic alternatives':   8,
+        'strategic review':     8, 'strategic alternative': 8,
+        'sale process':         8, 'exploring sale':        8,
+        'potential sale':       8,
+        'nvidia partnership':   8, 'microsoft partnership': 8,
+        'google partnership':   8, 'amazon partnership':    8,
+        'major contract':       8, 'government contract':   8,
+        '무상증자':             8, '자사주 소각':           8,
+        '흑자전환':             8, '흑자 전환':             8,
+        '상한가':               8, '사상 최대':             8,
+        '사상 최고':            8, '역대 최대':             8,
+        '역대 최고':            8, '어닝서프라이즈':        8,
+
+        # ── 7점: 파트너십, 임상 2상, 중형 계약 ──────────────
+        'partnership':          7, 'collaboration':         7,
+        'license deal':         7, 'licensing agreement':   7,
+        'milestone payment':    7, 'exclusive license':     7,
+        'phase 2':              7, 'clinical trial':        7,
+        'nvidia':               7, 'openai':                7,
+        'raises':               7, 'private placement':     7,
+        'grant awarded':        7, 'government funding':    7,
+        'spac merger':          7, 'business combination':  7,
+        'merger completion':    7, 'de-spac':               7,
+        'earnings beat':        7, 'revenue beat':          7,
+        'guidance raised':      7, 'record revenue':        7,
+        'record earnings':      7, 'blowout quarter':       7,
+        '수주':                 7, '계약':                  7,
+        '합의':                 7,   # 인수 합의, 협의 합의 등 한국 M&A 변형 포괄
+        '특허':                 7, '임상 성공':             7,
+        '흑자':                 7, '급등':                  7,
+        '컨센서스 상회':        7, '예상 상회':             7,
+        '턴어라운드':           7, '최대 실적':             7,
+
+        # ── 6점: 제품 출시, AI 플랫폼 (신뢰 소스에서만 통과) ─
+        'launches':             6, 'launch':                6,
+        'ai platform':          6, 'platform launch':       6,
+        'agentic ai':           6, 'generative ai':         6,
+        'artificial intelligence': 6, 'ai technology':      6,
+        'ai model':             6, 'ai chip':               6,
+        'automation':           6, 'api integration':       6,
+        'api launch':           6, 'saas':                  6,
+        'cloud platform':       6, 'digital transformation': 6,
+        'semiconductor':        6, 'chip':                  6,
+        'ipo':                  6, 'nasdaq debut':          6,
+        'nyse debut':           6, 'initial public offering': 6,
+        'bitcoin':              6, 'ethereum':              6,
+        'crypto':               6, 'blockchain':            6,
+        '신규상장':             6, '재상장':                6,
+        '합병상장':             6, '스팩 합병':             6,
+        '영업이익 증가':        6, '매출 증가':             6,
+        '실적 개선':            6,
+    }
+
+    # ── 소스별 threshold (낮을수록 더 많은 뉴스 통과) ────────
+    # 공식 보도자료 배포 서비스 (기업이 직접 올림 → 루머 없음) → 6점
+    # 편집 기사 혼재 소스 → 7점
+    # 속보/루머 가능성 소스 → 8점
+    SOURCE_THRESHOLD = {
+        'PR Newswire':      6.0,
+        'GlobeNewswire':    6.0,
+        'Business Wire':    6.0,
+        'SEC 8-K':          6.0,
+        'Benzinga':         7.0,
+        '매일경제':         7.0,
+        '한국경제':         7.0,
+        '네이버 증권 속보': 8.0,
+    }
+
+    @classmethod
+    def keyword_score(cls, title: str) -> float:
+        """
+        🆕 AI 없이 순수 키워드로 뉴스 긴급도 점수 계산 (0~10)
+        우선순위:
+          1. POSITIVE_OVERRIDE → 9점 고정 (악재 철회 케이스)
+          2. KEYWORD_SCORES    → 해당 키워드의 정의된 점수
+          3. POSITIVE_KEYWORDS → 5점 (기본 호재, 키워드 점수 미정의)
+          4. 없음              → 0점
+        """
+        title_lower = title.lower()
+
+        # 1순위: POSITIVE_OVERRIDE (악재 철회 → 항상 강한 호재)
+        for kw in cls.POSITIVE_OVERRIDE:
+            if kw.lower() in title_lower:
+                return 9.0
+
+        # 2순위: KEYWORD_SCORES (긴 키워드 먼저 체크 → 정확도 향상)
+        best_score = 0.0
+        for kw, score in sorted(cls.KEYWORD_SCORES.items(),
+                                 key=lambda x: len(x[0]), reverse=True):
+            if kw.lower() in title_lower and score > best_score:
+                best_score = float(score)
+
+        if best_score > 0:
+            return best_score
+
+        # 3순위: 기본 POSITIVE_KEYWORDS (점수 정의 안 된 키워드)
+        for kw in cls.POSITIVE_KEYWORDS:
+            if kw.lower() in title_lower:
+                return 5.0
+
+        return 0.0
+
     # Reddit 설정 (선택사항)
     REDDIT_MIN_MENTIONS = 10
     REDDIT_SUBREDDITS = ['wallstreetbets', 'stocks', 'investing', 'pennystocks']

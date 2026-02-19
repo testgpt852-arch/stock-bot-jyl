@@ -39,10 +39,19 @@ class AIBrainV3:
             'gemini-2.5-flash-lite',    # 백업
         ]
 
+        # 🆕 뉴스 분석 전용 (Gemma 우선 → Gemini 쿼터 절약)
+        # analyze_news_signal 전용: Gemma가 충분히 강력하고 무제한
+        self.news_models = [
+            'gemma-3-27b-it',           # 무제한 쿼터 (24시간 뉴스 분석)
+            'gemma-3-12b-it',           # 백업
+            'gemini-2.5-flash-lite',    # 최후 백업
+        ]
+
+        # /analyze 명령어 전용 (Gemini 고성능)
         self.report_models = [
             'gemini-3-flash-preview',   # 고성능 (/analyze 전용)
             'gemini-2.5-flash',         # 백업
-            'gemma-3-27b-it',
+            'gemma-3-27b-it',           # 최후 백업
         ]
 
         # 🆕 Gemma 모델 목록 (JSON mime_type 미지원 → 텍스트 모드로 처리)
@@ -104,6 +113,11 @@ class AIBrainV3:
 
     async def quick_score(self, title, threshold=8.0):
         """
+        ⚠️ DEPRECATED: AI 호출 방식의 1차 필터 (비효율 → 사용 중단)
+        현재는 Config.keyword_score() 순수 코드 방식으로 대체됨.
+        이 함수는 하위 호환성을 위해 유지하지만 호출되지 않음.
+
+        구버전 동작:
         🔥 v3.0 Beast Mode + 강화: 빠른 1차 필터 (제목만)
         ⚡ M&A/자금조달 키워드 감지 시 무조건 9-10점
         """
@@ -180,11 +194,13 @@ class AIBrainV3:
 
         return False
 
-    async def analyze_news_signal(self, news_item):
+    async def analyze_news_signal(self, news_item, min_score: int = 7):
         """
         🔥 v3.0 Beast Mode + 강화: 상세 뉴스 분석 + 티커 정확도 향상
         ✅ top_ticker: 1등 대장주 티커를 별도 키로 반환
         🎯 티커 정확도: 본문에서 명확히 추출, 추측 금지, NASDAQ 심볼 형식 검증
+        🆕 news_models (Gemma) 전용: Gemini 쿼터 절약 → /analyze 전용
+        🆕 min_score: 소스 신뢰도 기반 threshold (telegram_bot에서 전달)
         """
         # 🔧 SEC 공시 등에서 미리 추출된 회사명 활용
         company_hint = news_item.get('company_name', '').strip()
@@ -286,7 +302,7 @@ class AIBrainV3:
         }}
         """
 
-        for model in self.report_models:
+        for model in self.news_models:
             try:
                 logger.info(f"🤖 [{model}] 뉴스 분석 시작...")
                 text = await self._generate(model, prompt, use_json_mode=True, timeout=_REPORT_TIMEOUT)
@@ -298,7 +314,9 @@ class AIBrainV3:
                 score = result.get('score', 0)
                 logger.info(f"✅ [{model}] 분석 성공 → 점수: {score}/10")
 
-                if score < 7:
+                # 🆕 min_score: 소스 신뢰도 기반 threshold 적용
+                if score < min_score:
+                    logger.debug(f"⏭️ [{model}] 점수 부족 ({score} < {min_score}) → 스킵")
                     return None
 
                 # top_ticker 정규화 (검증 없이 AI 신뢰)
