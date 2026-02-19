@@ -163,48 +163,104 @@ class TelegramBot:
             return
 
         ticker = ' '.join(context.args)
-        await update.message.reply_text(f"🔍 {ticker} 분석 중...")
+        await update.message.reply_text(f"🔍 {ticker} 분석 중... (10~30초 소요)")
 
         try:
             import yfinance as yf
+            import time
 
+            # 한국어 종목명 → 코드 매핑
             ticker_map = {
-                '삼성전자': '005930.KS',
-                'sk하이닉스': '000660.KS',
-                '현대차': '005380.KS',
-                'lg화학': '051910.KS',
-                'naver': '035420.KS',
-                '카카오': '035720.KS',
+                '삼성전자': '005930.KS', 'sk하이닉스': '000660.KS',
+                '현대차': '005380.KS',   'lg화학': '051910.KS',
+                'naver': '035420.KS',    '카카오': '035720.KS',
+                'lg에너지솔루션': '373220.KS', '셀트리온': '068270.KS',
+                '기아': '000270.KS',     '포스코홀딩스': '005490.KS',
             }
 
             symbol = ticker_map.get(ticker.lower())
             if not symbol:
-                symbol = f"{ticker}.KS" if ticker.isdigit() else ticker.upper()
+                # 6자리 숫자 → 한국 종목
+                if ticker.isdigit() and len(ticker) == 6:
+                    symbol = f"{ticker}.KS"
+                else:
+                    symbol = ticker.upper()
 
-            stock = yf.Ticker(symbol)
-            hist  = stock.history(period='5d', prepost=True)
+            # ── yfinance 호출 (재시도 3회, 지수 백오프) ──
+            hist = None
+            info = {}
+            last_err = None
+            for attempt in range(3):
+                try:
+                    stock = yf.Ticker(symbol)
+                    hist  = stock.history(period='5d')
+                    try:
+                        info = stock.info or {}
+                    except Exception:
+                        info = {}
+                    if not hist.empty:
+                        break
+                except Exception as e:
+                    last_err = e
+                    wait = 2 ** attempt  # 1초 → 2초 → 4초
+                    logger.warning(f"yfinance 재시도 {attempt+1}/3 ({wait}s): {e}")
+                    await asyncio.sleep(wait)
 
-            if hist.empty:
-                await update.message.reply_text(f"⚠️ {ticker} 데이터를 찾을 수 없습니다.")
-                return
+            if hist is None or hist.empty:
+                # yfinance 실패해도 AI 분석은 진행
+                await update.message.reply_text(
+                    f"⚠️ {ticker} 가격 데이터를 가져오지 못했습니다.\n"
+                    f"(yfinance 제한 또는 잘못된 종목코드)\n\n"
+                    f"🤖 AI 분석만 진행합니다..."
+                )
+                price_msg = None
+            else:
+                current    = hist['Close'].iloc[-1]
+                prev       = hist['Close'].iloc[-2] if len(hist) > 1 else current
+                change     = current - prev
+                change_pct = (change / prev) * 100 if prev != 0 else 0
+                volume     = hist['Volume'].iloc[-1]
+                avg_vol    = hist['Volume'].mean()
+                vol_ratio  = volume / avg_vol if avg_vol > 0 else 0
 
-            current    = hist['Close'].iloc[-1]
-            prev       = hist['Close'].iloc[-2] if len(hist) > 1 else current
-            change     = current - prev
-            change_pct = (change / prev) * 100 if prev != 0 else 0
-            volume     = hist['Volume'].iloc[-1]
-            avg_vol    = hist['Volume'].mean()
-            vol_ratio  = volume / avg_vol if avg_vol > 0 else 0
+                # 52주 고/저가
+                high_52w = info.get('fiftyTwoWeekHigh', '-')
+                low_52w  = info.get('fiftyTwoWeekLow', '-')
+                company_name = info.get('longName') or info.get('shortName') or ticker
 
-            msg  = f"📊 {ticker} 분석 결과\n\n"
-            msg += f"현재가: {current:,.2f} ({change:+.2f}, {change_pct:+.2f}%)\n"
-            msg += f"거래량: {volume:,.0f} (평균 대비 {vol_ratio:.1f}배)\n\n"
-            msg += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            await update.message.reply_text(msg)
+                change_emoji = "📈" if change >= 0 else "📉"
+                price_msg  = f"📊 {company_name} ({symbol})\n\n"
+                price_msg += f"{change_emoji} 현재가: {current:,.2f}\n"
+                price_msg += f"   변동: {change:+.2f} ({change_pct:+.2f}%)\n"
+                price_msg += f"📈 거래량: {volume:,.0f} (평균 {vol_ratio:.1f}배)\n"
+                if high_52w != '-' and low_52w != '-':
+                    price_msg += f"📐 52주: {low_52w:,.2f} ~ {high_52w:,.2f}\n"
+                price_msg += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+                await update.message.reply_text(price_msg)
+
+            # ── AI 분석 (ai_brain.analyze_news_signal 재활용) ──
+            await update.message.reply_text("🤖 AI 심층 분석 중...")
+
+            # /analyze 전용 가상 뉴스 아이템 생성
+            fake_news = {
+                'title': f"{ticker} 종목 분석 요청",
+                'source': '/analyze 명령어',
+                'market': 'KR' if (symbol.endswith('.KS') or symbol.endswith('.KQ')) else 'US',
+                'company_name': ticker,
+            }
+
+            # AI 분석 전용 프롬프트로 교체
+            ai_result = await self.ai.analyze_stock_on_demand(ticker, symbol, info)
+
+            if ai_result:
+                await update.message.reply_text(ai_result)
+            else:
+                await update.message.reply_text("⚠️ AI 분석에 실패했습니다. 잠시 후 다시 시도해주세요.")
 
         except Exception as e:
             logger.error(f"/analyze 오류: {e}")
-            await update.message.reply_text(f"⚠️ 분석 중 오류 발생: {str(e)}")
+            await update.message.reply_text(f"⚠️ 오류 발생: {str(e)}")
 
     async def cmd_report(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📊 리포트 생성 중...")
@@ -360,21 +416,27 @@ class TelegramBot:
 
                         market = news.get('market', 'US')
 
+                        # 실제 종목코드가 아닌 값 필터 (비상장/스타트업/섹터 등록 방지)
+                        _INVALID_TICKERS = {'비상장', '스타트업', '섹터', 'UNKNOWN', '', 'null', 'NULL'}
+
+                        def _is_valid_ticker(t):
+                            return t and t.strip() not in _INVALID_TICKERS
+
                         # ✅ [핵심] AI가 직접 지목한 대장주 → 즉시 1분 집중 감시 등록
                         top_ticker = analysis.get('top_ticker')
-                        if top_ticker:
+                        if top_ticker and _is_valid_ticker(top_ticker):
                             self.momentum.add_dynamic_ticker(top_ticker, market)
                             logger.info(f"🎯 AI 대장주 집중 감시 등록: {top_ticker} ({market})")
 
                         # 뉴스에 명시된 종목도 추가
                         ticker_in_news = analysis.get('ticker_in_news')
-                        if ticker_in_news and ticker_in_news != 'null':
+                        if ticker_in_news and ticker_in_news != 'null' and _is_valid_ticker(ticker_in_news):
                             self.momentum.add_dynamic_ticker(ticker_in_news, market)
 
                         # AI 추천 종목도 추가 (최대 3개)
                         for rec in analysis.get('recommendations', [])[:3]:
-                            rec_ticker = rec.get('ticker', 'UNKNOWN')
-                            if rec_ticker not in ('UNKNOWN', '', None):
+                            rec_ticker = rec.get('ticker', '')
+                            if _is_valid_ticker(rec_ticker):
                                 self.momentum.add_dynamic_ticker(rec_ticker, market)
 
                         # 알림 발송
@@ -457,19 +519,30 @@ class TelegramBot:
     # 메시지 포맷
     # ────────────────────────────────────────────
     def _format_news_alert(self, news: dict, analysis: dict) -> str:
-        score       = analysis.get('score', 0)
-        certainty   = analysis.get('certainty', 'uncertain')
-        summary     = analysis.get('summary', '')
-        key_catalyst = analysis.get('key_catalyst', '')
-        top_ticker  = analysis.get('top_ticker')
+        score           = analysis.get('score', 0)
+        certainty       = analysis.get('certainty', 'uncertain')
+        summary         = analysis.get('summary', '')
+        key_catalyst    = analysis.get('key_catalyst', '')
+        top_ticker      = analysis.get('top_ticker')
+        surge_timing    = analysis.get('surge_timing', '')
+        news_reliability = analysis.get('news_reliability', '')
 
         cert_emoji = "✅" if certainty == "confirmed" else "⚠️"
 
+        # 신뢰도 이모지
+        reliability_emoji = {'high': '🟢', 'medium': '🟡', 'low': '🔴'}.get(news_reliability, '')
+
         msg  = f"🔥 급등 가능성 {score}/10\n"
-        msg += f"{cert_emoji} {certainty.upper()}\n\n"
+        msg += f"{cert_emoji} {certainty.upper()}"
+        if reliability_emoji:
+            msg += f"  {reliability_emoji} 신뢰도:{news_reliability.upper()}"
+        msg += "\n\n"
         msg += f"📰 {news['title']}\n\n"
         msg += f"💡 {summary}\n"
-        msg += f"🎯 재료: {key_catalyst}\n\n"
+        msg += f"🎯 재료: {key_catalyst}\n"
+        if surge_timing:
+            msg += f"⏱️ 타이밍: {surge_timing}\n"
+        msg += "\n"
 
         # ✅ AI 대장주 표시
         if top_ticker:
@@ -479,11 +552,13 @@ class TelegramBot:
         if recommendations:
             msg += "📊 수혜주:\n"
             for rec in recommendations[:3]:
-                rank   = rec.get('rank', '')
-                ticker = rec.get('ticker', 'UNKNOWN')
-                name   = rec.get('name', 'Unknown')
-                reason = rec.get('reason', '')
-                msg += f"  {rank}: {name} ({ticker})\n"
+                rank         = rec.get('rank', '')
+                ticker       = rec.get('ticker', '')
+                name         = rec.get('name', 'Unknown')
+                reason       = rec.get('reason', '')
+                benefit_type = rec.get('benefit_type', '')
+                benefit_tag  = f" [{benefit_type}]" if benefit_type else ""
+                msg += f"  {rank}: {name} ({ticker}){benefit_tag}\n"
                 msg += f"  → {reason}\n"
 
         msg += f"\n🔗 {news.get('url', 'N/A')}\n"

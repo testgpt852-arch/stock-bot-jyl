@@ -479,15 +479,22 @@ class NewsEngineV3:
     def _passes_keyword_filter(self, title):
         """키워드 필터 (Config 기반)"""
         title_upper = title.upper()
-        
-        # 악재 키워드 먼저 체크
+
+        # 🚨 1순위: POSITIVE_OVERRIDE 체크 (악재 키워드 포함해도 무조건 통과)
+        # 예: "유상증자 철회"는 NEGATIVE의 "유상증자"를 포함하지만 강한 호재
+        for override in Config.POSITIVE_OVERRIDE:
+            if override.upper() in title_upper:
+                logger.debug(f"✅ OVERRIDE 통과: {override} | {title[:50]}")
+                return True
+
+        # 🚫 2순위: 악재 키워드 체크
         for negative in Config.NEGATIVE_KEYWORDS:
             if negative.upper() in title_upper:
                 return False
-        
-        # 호재 키워드 체크
+
+        # ✅ 3순위: 호재 키워드 체크
         for positive in Config.POSITIVE_KEYWORDS:
             if positive.upper() in title_upper:
                 return True
-        
+
         return False
