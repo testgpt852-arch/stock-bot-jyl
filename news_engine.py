@@ -117,6 +117,11 @@ class NewsEngineV3:
             news_list.sort(key=lambda x: x.get('published_timestamp', 0), reverse=True)
             
             logger.info(f"📊 뉴스 수집: {len(news_list)}개 (미국 5대장 + 한국 3대장 + SEC)")
+
+            # 🆕 본문 수집: 키워드 통과한 뉴스들의 본문을 병렬로 fetch
+            if news_list:
+                await self._enrich_with_content(session, news_list)
+
             return news_list
     
     async def _fetch_rss(self, session, source):
@@ -498,3 +503,113 @@ class NewsEngineV3:
                 return True
 
         return False
+
+    # ────────────────────────────────────────────
+    # 🆕 본문 수집 (Content Enrichment)
+    # ────────────────────────────────────────────
+
+    async def _enrich_with_content(self, session, news_list):
+        """
+        키워드 통과한 뉴스 본문을 병렬로 fetch
+        - SEC 공시(filing)는 스킵 (XML 구조 복잡, 제목에 정보 충분)
+        - 네이버 속보는 스킵 (외부 링크 다양해 파싱 불안정)
+        - 실패해도 content = '' 로 fallback (분석은 제목으로 계속)
+        """
+        SKIP_SOURCES = {'SEC 8-K', '네이버 증권 속보'}
+        targets = [
+            item for item in news_list
+            if item.get('source') not in SKIP_SOURCES
+            and not item.get('content')
+        ]
+
+        if not targets:
+            return
+
+        logger.info(f"📄 본문 수집 시작: {len(targets)}개 병렬 fetch")
+        tasks = [self._fetch_article_content(session, item) for item in targets]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        success = sum(1 for r in results if r is True)
+        logger.info(f"✅ 본문 수집 완료: {success}/{len(targets)}개 성공")
+
+    async def _fetch_article_content(self, session, news_item):
+        """
+        소스별 본문 파싱 (timeout 7초, 최대 800자)
+        news_item에 'content' 키를 직접 추가
+        """
+        url    = news_item.get('url', '')
+        source = news_item.get('source', '')
+
+        if not url:
+            return False
+
+        try:
+            response = await asyncio.wait_for(
+                session.get(url, timeout=7),
+                timeout=8
+            )
+
+            if response.status_code != 200:
+                return False
+
+            soup = BeautifulSoup(response.text, 'html.parser')
+            tag  = None
+
+            # ── 소스별 본문 셀렉터 ──────────────────────────────
+            if source == 'PR Newswire':
+                tag = (soup.find('div', class_='release-body') or
+                       soup.find('section', class_='release-body'))
+
+            elif source == 'GlobeNewswire':
+                tag = (soup.find('div', class_='story-body') or
+                       soup.find('article'))
+
+            elif source == 'Business Wire':
+                tag = (soup.find('div', class_='bw-release-story') or
+                       soup.find('div', {'id': 'release-body'}))
+
+            elif source == 'Benzinga':
+                tag = (soup.find('div', class_='article-content-body') or
+                       soup.find('div', class_='article__body') or
+                       soup.find('div', {'id': 'article-body'}))
+
+            elif source == '매일경제':
+                tag = (soup.find('div', class_='news_cnt_detail_wrap') or
+                       soup.find('div', {'id': 'article_body'}) or
+                       soup.find('div', class_='art_txt'))
+
+            elif source == '한국경제':
+                tag = (soup.find('div', {'id': 'articletxt'}) or
+                       soup.find('div', class_='article-body') or
+                       soup.find('div', class_='content-body'))
+
+            else:
+                # 범용 파싱: article → main → class 키워드 순서
+                tag = (soup.find('article') or
+                       soup.find('main') or
+                       soup.find('div', class_=re.compile(
+                           r'article|content|story|body', re.I)))
+
+            # ── 공통 후처리 ──────────────────────────────────────
+            if tag:
+                text = tag.get_text(separator=' ', strip=True)
+                text = re.sub(r'\s+', ' ', text).strip()
+                text = text[:800]
+
+                if len(text) > 50:  # 너무 짧으면 의미없음
+                    news_item['content'] = text
+                    logger.debug(
+                        f"📄 본문 수집 성공: [{source}] {len(text)}자 | "
+                        f"{news_item['title'][:40]}"
+                    )
+                    return True
+
+            logger.debug(f"📄 셀렉터 미매칭: [{source}] {url[:60]}")
+            return False
+
+        except asyncio.TimeoutError:
+            logger.debug(f"⏱️ 본문 timeout: [{source}] {url[:60]}")
+            return False
+        except Exception as e:
+            logger.debug(f"📄 본문 수집 실패: [{source}] {e}")
+            return False
