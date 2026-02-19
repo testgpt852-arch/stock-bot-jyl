@@ -544,9 +544,15 @@ class TelegramBot:
             msg += f"⏱️ 타이밍: {surge_timing}\n"
         msg += "\n"
 
-        # ✅ AI 대장주 표시
-        if top_ticker:
-            msg += f"👑 AI 대장주: {top_ticker} → 1분 집중 감시 등록!\n\n"
+        # 실제 등록된 경우만 대장주 표시 (비상장/스타트업/섹터는 표시 안 함)
+        _INVALID_TICKERS = {'비상장', '스타트업', '섹터', 'UNKNOWN', '', 'null', 'NULL'}
+        top_ticker_display = top_ticker if (top_ticker and top_ticker.strip() not in _INVALID_TICKERS) else None
+
+        if top_ticker_display:
+            msg += f"👑 AI 대장주: {top_ticker_display} → 1분 집중 감시 등록!\n\n"
+        elif top_ticker:
+            # 비상장이지만 AI가 지목한 건 표시는 해줌 (감시 등록 안 됨을 명시)
+            msg += f"👑 AI 지목: {top_ticker} (비상장/미등록)\n\n"
 
         recommendations = analysis.get('recommendations', [])
         if recommendations:
