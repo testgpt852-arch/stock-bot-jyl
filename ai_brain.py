@@ -225,7 +225,10 @@ class AIBrainV3:
            - 애경산업 (018250): 화장품 ODM. 미용 관련이어도 직접 언급 없으면 금지
            - 미래에셋증권 (006800): 증권사. 금융 뉴스라도 직접 관련 없으면 금지
         3. 삼성전자 (005930)는 반도체·스마트폰·가전 분야 기업임. 삼성화재·삼성증권 등 다른 삼성 계열사와 혼동 금지.
-        4. 관련 수혜주가 없으면 recommendations를 빈 리스트([])로 반환해라. 억지로 채우지 마라.
+        4. 미국 기업 뉴스에서 한국 종목을 간접수혜로 추천하지 마라.
+           - "A가 B에 부품을 납품하므로 A가 수혜" 같은 6단계 논리 금지
+           - 한국 종목은 뉴스에 한국 기업이 명시적으로 언급된 경우에만 추천
+        5. 관련 수혜주가 없으면 recommendations를 빈 리스트([])로 반환해라. 억지로 채우지 마라.
         5. "AI 관련", "K-뷰티 관련" 같은 막연한 이유로 연관 없는 기업을 넣지 마라.
         
         ⛔ 뒷북 방지:
@@ -298,12 +301,22 @@ class AIBrainV3:
                 else:
                     result['top_ticker'] = top_ticker.strip()
 
-                # 🚫 환각 필터: 본문/제목에 없는 SOOP/애경산업 등 제거
+                # 🚫 환각 필터: 본문/제목에 없는 SOOP/애경산업/삼성전자 등 제거
                 news_text = (news_item['title'] + ' ' + content_raw).upper()
+                # 미국 뉴스 여부 확인
+                is_us_news = news_item.get('market', 'US') == 'US'
+
                 HALLUCINATION_GUARD = {
+                    # 한국 환각 빈도 높은 종목: 본문에 없으면 무조건 제거
                     '067160': 'SOOP',
                     '018250': '애경',
-                    '006800': '미래에셋증권',
+                    '006800': '미래에셋',
+                    # 삼성전자: 미국 뉴스에서 특히 자주 환각으로 나옴
+                    '005930': '삼성',
+                    # 기타 자주 환각되는 대형주
+                    '000660': 'SK하이닉스',
+                    '051910': 'LG화학',
+                    '035420': 'NAVER',
                 }
                 filtered_recs = []
                 for rec in result.get('recommendations', []):
@@ -314,6 +327,11 @@ class AIBrainV3:
                     if (not name or name.upper() in ('UNKNOWN', 'UNKNOWN COMPANY', '')) and company_hint:
                         if rec.get('rank', '').startswith('1'):
                             rec['name'] = company_hint
+
+                    # 🚫 미국 뉴스에서 한국 6자리 종목코드 추천 → 거의 항상 환각
+                    if is_us_news and ticker.isdigit() and len(ticker) == 6:
+                        logger.warning(f"🚫 미국뉴스에서 한국주 추천: {name}({ticker}) → 제거")
+                        continue
 
                     # 환각 체크: 해당 기업 이름이 본문에 없으면 제거
                     guard_name = HALLUCINATION_GUARD.get(ticker)
@@ -332,10 +350,15 @@ class AIBrainV3:
                 # top_ticker도 환각 필터 적용
                 tt = result.get('top_ticker')
                 if tt:
-                    guard_name = HALLUCINATION_GUARD.get(tt)
-                    if guard_name and guard_name not in news_text:
-                        logger.warning(f"🚫 top_ticker 환각: {tt} 제거")
+                    # 미국 뉴스에서 한국 6자리 코드
+                    if is_us_news and tt.isdigit() and len(tt) == 6:
+                        logger.warning(f"🚫 top_ticker 미국뉴스 한국주: {tt} 제거")
                         result['top_ticker'] = None
+                    else:
+                        guard_name = HALLUCINATION_GUARD.get(tt)
+                        if guard_name and guard_name not in news_text:
+                            logger.warning(f"🚫 top_ticker 환각: {tt} 제거")
+                            result['top_ticker'] = None
 
                 return result
 
