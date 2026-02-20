@@ -427,27 +427,54 @@ class TelegramBot:
 
                         market = news.get('market', 'US')
 
-                        # 실제 종목코드가 아닌 값 필터 (비상장/스타트업/섹터 등록 방지)
-                        _INVALID_TICKERS = {'비상장', '스타트업', '섹터', 'UNKNOWN', '', 'null', 'NULL'}
+                        # ── 티커 유효성 검사 함수 ──────────────────────────
+                        _INVALID_VALUES = {
+                            '비상장', '스타트업', '섹터', 'UNKNOWN',
+                            '', 'null', 'NULL', 'N/A', 'n/a',
+                        }
 
-                        def _is_valid_ticker(t):
-                            return t and t.strip() not in _INVALID_TICKERS
+                        def _is_valid_ticker(t: str, mkt: str = 'US') -> bool:
+                            """
+                            1차: 무효값 필터
+                            2차: 형식 검증
+                              - KR: 정확히 6자리 숫자
+                              - US: 1~5자리 영문 대문자 (숫자 혼합 허용)
+                            """
+                            if not t or t.strip() in _INVALID_VALUES:
+                                return False
+                            t = t.strip()
+                            if mkt == 'KR':
+                                # 한국 종목코드: 정확히 6자리 숫자
+                                if not (t.isdigit() and len(t) == 6):
+                                    logger.warning(
+                                        f"⚠️ KR 티커 형식 불일치 (6자리 숫자 아님): '{t}' → 등록 스킵"
+                                    )
+                                    return False
+                            else:
+                                # 미국 티커: 1~6자리 영문/숫자 (특수기호 제외)
+                                import re as _re
+                                if not _re.match(r'^[A-Z]{1,6}$', t.upper()):
+                                    logger.warning(
+                                        f"⚠️ US 티커 형식 불일치: '{t}' → 등록 스킵"
+                                    )
+                                    return False
+                            return True
 
                         # ✅ [핵심] AI가 직접 지목한 대장주 → 즉시 1분 집중 감시 등록
                         top_ticker = analysis.get('top_ticker')
-                        if top_ticker and _is_valid_ticker(top_ticker):
+                        if top_ticker and _is_valid_ticker(top_ticker, market):
                             self.momentum.add_dynamic_ticker(top_ticker, market)
                             logger.info(f"🎯 AI 대장주 집중 감시 등록: {top_ticker} ({market})")
 
                         # 뉴스에 명시된 종목도 추가
                         ticker_in_news = analysis.get('ticker_in_news')
-                        if ticker_in_news and ticker_in_news != 'null' and _is_valid_ticker(ticker_in_news):
+                        if ticker_in_news and ticker_in_news != 'null' and _is_valid_ticker(ticker_in_news, market):
                             self.momentum.add_dynamic_ticker(ticker_in_news, market)
 
                         # AI 추천 종목도 추가 (최대 3개)
                         for rec in analysis.get('recommendations', [])[:3]:
                             rec_ticker = rec.get('ticker', '')
-                            if _is_valid_ticker(rec_ticker):
+                            if _is_valid_ticker(rec_ticker, market):
                                 self.momentum.add_dynamic_ticker(rec_ticker, market)
 
                         # 알림 발송
