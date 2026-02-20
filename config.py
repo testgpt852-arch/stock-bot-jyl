@@ -354,6 +354,118 @@ class Config:
     ]
 
     # ──────────────────────────────────────────────────────────
+    # 🚫 NEGATIVE_SCORES - 악재 강도별 마이너스 점수
+    # keyword_score()에서 POSITIVE 점수에서 차감
+    # -10 이하 → 즉시 차단 (POSITIVE_OVERRIDE 없으면 통과 불가)
+    # ──────────────────────────────────────────────────────────
+    NEGATIVE_SCORES = {
+        # ── -10점: 즉시 차단 (치명적 악재) ──────────────────
+        'bankruptcy':           -10, 'chapter 11':           -10,
+        'chapter 7':            -10, 'liquidation':          -10,
+        'securities fraud':     -10, 'criminal charges':     -10,
+        'class action':         -10,
+        'fda rejection':        -10, 'complete response letter': -10,
+        'clinical hold':        -10, 'failed to meet':       -10,
+        'hindenburg':           -10, 'citron':               -10,
+        'muddy waters':         -10, 'grizzly research':     -10,
+        'white diamond':        -10, 'bonitas':              -10,
+        'culper':               -10,
+        '파산':                 -10, '분식회계':             -10,
+        '횡령':                 -10, '배임':                 -10,
+        '자본잠식':             -10,
+
+        # ── -8점: 강한 악재 ───────────────────────────────────
+        'delisting':            -8, 'nasdaq delisting':      -8,
+        'going concern':        -8, 'substantial doubt':     -8,
+        'wind down':            -8, 'restructuring':         -8,
+        'deficiency notice':    -8,
+        'investigation':        -8, 'sec investigation':     -8,
+        'doj investigation':    -8, 'subpoena':              -8,
+        'lawsuit':              -8,
+        'recall':               -8, 'product recall':        -8,
+        'safety recall':        -8,
+        'reverse split':        -8, 'reverse stock split':   -8,
+        'share consolidation':  -8,
+        'trading halt':         -8, 'halted':                -8,
+        'suspended':            -8,
+        'investor alert':       -8, 'law firm investigates': -8,
+        'investigates claims':  -8, 'pomerantz':             -8,
+        '상장폐지':             -8, '관리종목':              -8,
+        '거래정지':             -8, '검찰':                  -8,
+        '조사':                 -8,
+
+        # ── -6점: 중간 악재 ───────────────────────────────────
+        'crl':                  -6, 'warning letter':        -6,
+        'fda warning':          -6, 'rejected':              -6,
+        'denial':               -6,
+        'short seller':         -6, 'short report':          -6,
+        'dilution':             -6, 'dilutive':              -6,
+        'share issuance':       -6, 'stock issuance':        -6,
+        'warrant exercise':     -6, 'convertible note':      -6,
+        'pipe offering':        -6,
+        '유상증자':             -6, '감자':                  -6,
+        '보호예수 해제':        -6, '오버행':                -6,
+        '블록딜':               -6, '대량 매도':             -6,
+        '전환청구':             -6, '전환권 행사':           -6,
+        '워런트 행사':          -6, '소송':                  -6,
+        '투자유의':             -6,
+
+        # ── -4점: 약한 악재 / 노이즈성 ──────────────────────
+        'offering':             -4, 'direct offering':       -4,
+        'public offering':      -4, 'registered direct offering': -4,
+        'secondary offering':   -4,
+        'follow-on offering':   -4, 'shelf offering':        -4,
+        'at-the-market offering': -4, 'atm offering':        -4,
+        'rights offering':      -4,
+        'stock split':          -4,
+        'circuit breaker':      -4, 'volatility halt':       -4,
+        'downgraded':           -4, 'upgraded':              -4,
+        '폭락':                 -4, '급락':                  -4,
+        '적자':                 -4,
+
+        # ── -2점: 노이즈 (정기 업데이트 / 의견성) ────────────
+        'analyst says':         -2, 'analyst ratings':       -2,
+        'analyst opinion':      -2, 'analyst note':          -2,
+        'price target':         -2, 'maintained':            -2,
+        'opinion':              -2, 'preview':               -2,
+        'outlook':              -2, 'forecast':              -2,
+        'prediction':           -2, 'summary':               -2,
+        'recap':                -2, 'market wrap':           -2,
+        'market update':        -2,
+        'why it moved':         -2, 'what to watch':         -2,
+        'what happened':        -2, 'explainer':             -2,
+        'investor presentation': -2, 'roadshow':             -2,
+        'quarterly update':     -2, 'monthly update':        -2,
+        'business update':      -2, 'corporate update':      -2,
+        'conference call':      -2, 'webcast':               -2,
+        'earnings call':        -2,
+        'to host':              -2, 'will host':             -2,
+        'to present':           -2, 'will present':          -2,
+        'files 10-k':           -2, 'files 10-q':            -2,
+        'files 20-f':           -2, 'annual report':         -2,
+        'quarterly report':     -2, 'form 10-k':             -2,
+        'form 10-q':            -2,
+        'stock movers':         -2, 'pre-market':            -2,
+        'after-hours':          -2, 'morning brief':         -2,
+        'market watch':         -2, 'stock alert':           -2,
+        'penny stock':          -2, 'meme stock':            -2,
+        'stock to watch':       -2, 'stocks to buy':         -2,
+        'top picks':            -2,
+        'sponsored':            -2, 'advertisement':         -2,
+        'paid promotion':       -2,
+        'short interest':       -2,
+        '루머':                 -2, '추정':                  -2,
+        '전망':                 -2, '예상':                  -2,
+        '관측':                 -2,
+        '하락':                 -2, '매도':                  -2,
+        '주주총회 소집':        -2, '주주총회 안내':         -2,
+        '배당 기준일':          -2, '공시 안내':             -2,
+        '정정 공시':            -2,
+        '분기 실적 발표 일정':  -2, '실적 발표 예정':       -2,
+        '실적 발표 일정':       -2,
+    }
+
+    # ──────────────────────────────────────────────────────────
     # 🆕 키워드 점수 테이블 (quick_score AI 호출 대체)
     # 뉴스 제목에서 가장 높은 점수의 키워드를 찾아 반환
     # 소스별 threshold와 함께 사용: score >= threshold 시 AI 분석 진행
@@ -630,34 +742,59 @@ class Config:
     @classmethod
     def keyword_score(cls, title: str) -> float:
         """
-        🆕 AI 없이 순수 키워드로 뉴스 긴급도 점수 계산 (0~10)
-        우선순위:
-          1. POSITIVE_OVERRIDE → 9점 고정 (악재 철회 케이스)
-          2. KEYWORD_SCORES    → 해당 키워드의 정의된 점수
-          3. POSITIVE_KEYWORDS → 5점 (기본 호재, 키워드 점수 미정의)
-          4. 없음              → 0점
+        🆕 AI 없이 순수 키워드로 뉴스 긴급도 점수 계산
+        
+        처리 순서:
+          1. POSITIVE_OVERRIDE 체크 → 해당 시 9.0 즉시 반환 (악재 철회)
+          2. NEGATIVE_SCORES 최악값 계산 (긴 키워드 우선)
+          3. KEYWORD_SCORES 최고값 계산 (긴 키워드 우선)
+          4. 순 점수 = 양수 점수 + 음수 패널티
+             - 패널티 ≤ -8 이고 POSITIVE가 9 미만 → 0 반환 (즉시 차단)
+             - 나머지 → max(0, 양수 + 패널티)
+          5. 양수 키워드 없으면 → POSITIVE_KEYWORDS fallback (5점)
+          6. 아무것도 없으면 → 0점
         """
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
         title_lower = title.lower()
 
-        # 1순위: POSITIVE_OVERRIDE (악재 철회 → 항상 강한 호재)
+        # ── 1순위: POSITIVE_OVERRIDE (악재 철회 → 무조건 통과) ──
         for kw in cls.POSITIVE_OVERRIDE:
             if kw.lower() in title_lower:
                 return 9.0
 
-        # 2순위: KEYWORD_SCORES (긴 키워드 먼저 체크 → 정확도 향상)
-        best_score = 0.0
+        # ── 2순위: NEGATIVE_SCORES 최악값 계산 ──────────────────
+        worst_neg = 0.0
+        for kw, penalty in sorted(cls.NEGATIVE_SCORES.items(),
+                                   key=lambda x: len(x[0]), reverse=True):
+            if kw.lower() in title_lower and penalty < worst_neg:
+                worst_neg = float(penalty)
+
+        # ── 3순위: KEYWORD_SCORES 최고값 계산 ───────────────────
+        best_pos = 0.0
         for kw, score in sorted(cls.KEYWORD_SCORES.items(),
-                                 key=lambda x: len(x[0]), reverse=True):
-            if kw.lower() in title_lower and score > best_score:
-                best_score = float(score)
+                                  key=lambda x: len(x[0]), reverse=True):
+            if kw.lower() in title_lower and score > best_pos:
+                best_pos = float(score)
 
-        if best_score > 0:
-            return best_score
+        # ── 4순위: 순 점수 계산 ─────────────────────────────────
+        if best_pos > 0:
+            # 치명적 악재(-8 이하)이고 압도적 호재(9점 이상) 아니면 차단
+            if worst_neg <= -8 and best_pos < 9:
+                _log.debug(
+                    f"🚫 악재 차단: pos={best_pos} neg={worst_neg} | {title[:50]}"
+                )
+                return 0.0
+            net = best_pos + worst_neg
+            return max(0.0, net)
 
-        # 3순위: 기본 POSITIVE_KEYWORDS (점수 정의 안 된 키워드)
+        # ── 5순위: 기본 POSITIVE_KEYWORDS fallback ───────────────
         for kw in cls.POSITIVE_KEYWORDS:
             if kw.lower() in title_lower:
-                return 5.0
+                # fallback도 악재 패널티 적용
+                if worst_neg <= -8:
+                    return 0.0
+                return max(0.0, 5.0 + worst_neg)
 
         return 0.0
 
