@@ -57,6 +57,25 @@ class Config:
         'reverse split cancelled', 'reverse split withdrawn',
     ]
 
+    # 🚫 LATE_KEYWORDS - 이미 주가에 반영된 뒷북 뉴스 즉시 차단
+    # _passes_keyword_filter와 keyword_score 양쪽에서 적용
+    LATE_KEYWORDS = [
+        # 이미 오른 결과 (한국)
+        '상한가', '무더기 상한가', '상한가 진입', '상한가 마감', '상한가 기록',
+        '신고가', '역대 최고가', '52주 최고가', '신고가 경신', '신고가 행진',
+        '급등 마감', '폭등 마감', '급등세 마감',            # '급등' 단독은 제외 (정상 기사 차단 위험)
+        '마감 시황', '장마감', '장 마감', '오전장 시황', '오후장 시황',
+        '증시 시황', '순환매', '순환매 장세',
+        '특징주',           # 이미 15%+ 오른 뒤 나오는 기사
+        '전일 대비', '전일대비',
+        '랠리 마감', '상승 마감', '상승세 마감',
+        # 이미 오른 결과 (미국)
+        'closed higher', 'market close', 'end of day', 'closing bell',
+        'new all-time high', 'new 52-week high', 'hits all-time high',
+        'hits record high', 'stock surges', 'shares surge',
+        'pre-market movers', 'after-hours movers',
+    ]
+
     # 🎯 v3.0 POSITIVE KEYWORDS - 섹터별 세분화 + 한국 테마 + RIME 반영
     POSITIVE_KEYWORDS = [
         # ===================================================================
@@ -224,7 +243,7 @@ class Config:
         # 기본 호재
         '승인', '허가', '인증', '수주', '계약', '특허', '개발', '출시',
         '임상', '성공', '합병', '인수', 'M&A', '제휴', '협력',
-        '정부 계약', '국방', '방산', '수출', '수주',
+        '정부 계약', '국방', '방산', '수출',
         '흑자전환', '실적', '개선', '신약', '신제품',
 
         # 🔥 한국 특화 테마 (국장만의 특징)
@@ -233,21 +252,12 @@ class Config:
         '자사주', '자사주 소각', '자사주 매입',
         '유상증자 철회', '전환사채 상환',
 
-        # 🔥 급등 직결 시그널
-        '상한가', '급등', '품절주', '공급부족',
+        # 🔥 급등 직결 시그널 (뒷북 아닌 것만)
         '사상 최대', '사상 최고', '역대 최대', '역대 최고',
         '최대 실적', '최대 수주', '최대 계약',
         '어닝서프라이즈', '컨센서스 상회', '예상 상회',
         '흑자 전환', '적자 탈출', '턴어라운드',
         '대규모 수주', '공급 계약', '납품 계약', '독점 공급',
-
-        # 정치/인맥 테마
-        '대통령', '장관', '여당', '야당', '정책', '특위',
-        '국회의원', '의원 관련주', '정치테마',
-
-        # 상장 관련
-        '신규상장', '재상장', '합병상장',
-        '스팩', '스팩 합병', '스팩 대상',
 
         # 산업 육성/지원
         'K-칩스법', '반도체 지원', '배터리 지원',
@@ -523,7 +533,7 @@ class Config:
         'durable response':     8, 'sustained response':    8,
         'complete response':    8, 'overall survival':      8,
         'os improvement':       8, 'objective response rate': 8,
-        'orr':                  8,
+        # 'orr' 단독 제거: 'W2CoRRection' 같은 false positive 방지. 'objective response rate'(8점)으로 대체
         'pfizer partnership':   8, 'roche collaboration':   8,
         'novartis agreement':   8, 'merck deal':            8,
         'jnj partnership':      8, 'bristol myers':         8,
@@ -736,7 +746,7 @@ class Config:
         'Benzinga':         7.0,
         '매일경제':         7.0,
         '한국경제':         7.0,
-        '네이버 증권 속보': 8.0,
+        '네이버 증권 속보': 8.0,   # 루머/뒷북 위험 가장 높음 → 가장 엄격
     }
 
     @classmethod
@@ -763,7 +773,12 @@ class Config:
             if kw.lower() in title_lower:
                 return 9.0
 
-        # ── 2순위: NEGATIVE_SCORES 최악값 계산 ──────────────────
+        # ── 2순위: LATE_KEYWORDS (뒷북 → 즉시 차단) ─────────────
+        for kw in cls.LATE_KEYWORDS:
+            if kw.lower() in title_lower:
+                return 0.0
+
+        # ── 3순위: NEGATIVE_SCORES 최악값 계산 ──────────────────
         worst_neg = 0.0
         for kw, penalty in sorted(cls.NEGATIVE_SCORES.items(),
                                    key=lambda x: len(x[0]), reverse=True):

@@ -211,103 +211,66 @@ class AIBrainV3:
         content_line = f"\n본문: {content_raw[:600]}" if content_raw else ""
 
         prompt = f"""
-        너는 초단타 급등주 전문 스캘퍼다. 이 뉴스를 깊이 분석해서 수혜주를 찾아줘.
+        너는 주식 트레이딩 전문가다. 이 뉴스를 깊이 분석해서 수혜주를 찾아줘.
         
         제목: {news_item['title']}
         출처: {news_item.get('source', 'Unknown')}{company_hint_line}{content_line}
         
         ══════════════════════════════════════
-        ⚠️ 핵심 규칙 (반드시 지켜라):
+        ⛔ 절대 금지 (위반 시 시스템 오류로 간주):
+        ══════════════════════════════════════
+        1. 본문/제목에 명시되지 않은 기업을 '수혜주'로 추천하지 마라.
+        2. 특히 아래 기업들은 뉴스와 직접 관련(계약·지분·파트너십·공식 언급)이 없으면 절대 추천 금지:
+           - SOOP (067160): 스트리밍 플랫폼. 관련 없는 뉴스에 반복적으로 나옴 → 철저히 금지
+           - 애경산업 (018250): 화장품 ODM. 미용 관련이어도 직접 언급 없으면 금지
+           - 미래에셋증권 (006800): 증권사. 금융 뉴스라도 직접 관련 없으면 금지
+        3. 삼성전자 (005930)는 반도체·스마트폰·가전 분야 기업임. 삼성화재·삼성증권 등 다른 삼성 계열사와 혼동 금지.
+        4. 관련 수혜주가 없으면 recommendations를 빈 리스트([])로 반환해라. 억지로 채우지 마라.
+        5. "AI 관련", "K-뷰티 관련" 같은 막연한 이유로 연관 없는 기업을 넣지 마라.
+        
+        ⛔ 뒷북 방지:
+        - "상한가", "신고가 경신", "무더기 상한가", "폭등 마감" 등 이미 결과가 나온 뉴스 → score 0점
+        - 스캘핑 봇은 "오르기 전" 재료를 찾는다
+        
+        ⛔ 저품질 뉴스 필터:
+        - 교육 과정 홍보, 행사 안내, 비영리재단 프로그램, 세무/회계 소프트웨어 출시 → score 1~3점
+        - 비상장 소기업 제품 출시 보도자료 (수혜 상장사 없음) → score 2~4점
+        - 주가 직접 영향 없는 홍보성 보도자료 → score 3점 이하
         ══════════════════════════════════════
         
-        【분석 순서】
-        1단계: 이 뉴스의 시장 맥락을 먼저 파악해라
-          - 어떤 산업/섹터의 이슈인가?
-          - 시장에서 얼마나 주목받을 이슈인가?
-          - 이 정보가 처음 나온 것인가, 이미 알려진 것인가?
-        2단계: 수혜주를 직접/간접으로 구분해서 선정해라
-          - 직접 수혜: 뉴스의 주체 기업 (가장 강하게 움직임)
-          - 간접 수혜: 동종업계, 부품/소재 공급사, 테마 동반 상승
-        3단계: 뉴스 신뢰도를 평가해라
-          - PR Newswire/Business Wire = 기업 공식 보도자료 (신뢰도 높음)
-          - SEC 공시 = 법적 구속력 있음 (매우 높음)
-          - 언론사 보도 = 보통 (확인 필요)
-          - 출처 불명/루머성 = 낮음
-        
-        【회사명(name) 규칙】
-        - 뉴스 제목 또는 "공시 회사명"에서 회사명이 확인되면 반드시 그 이름을 사용
-        - 회사명은 절대 "UNKNOWN" 금지! 제목에서 반드시 추출할 것
-        - 예: "[공시] 8-K - M Evo Global Acquisition Corp II (0002087361)" → name: "M Evo Global Acquisition Corp II"
-        - 예: "공시 회사명 (확정): Tesla Inc." → name: "Tesla Inc."
-        
-        【티커(ticker) 규칙 - 매우 엄격히 준수】
-        - 뉴스에 "(NASDAQ: XXXX)" "(NYSE: XXXX)" "(KRX: XXXXXX)" 등 명시된 경우 → 그대로 사용
-        - 괄호 안 숫자(예: 0002087361)는 SEC CIK 번호 → 절대 티커 아님!
-        
-        ⚠️ 한국 종목코드 규칙 (절대 틀리면 안 됨):
-          - 반드시 정확히 알고 있는 코드만 사용해라
-          - 삼성전자=005930, LG화학=051910, 셀트리온=068760, 삼성바이오로직스=207940
-          - 애경산업=018250, SOOP=067160, 삼성증권=016360, 미래에셋증권=006800
-          - 확신이 없으면 절대 추측하지 말고 반드시 "비상장" 으로 표기할 것
-          - 틀린 코드를 쓰는 것보다 "비상장"이 훨씬 낫다
-        
-        ⚠️ 수혜주 선정 규칙 (중요):
-          - 뉴스 내용과 직접 연관된 기업만 추천해라
-          - 뉴스에 언급되지 않은 기업을 억지로 끼워 넣지 마라
-          - 특정 종목(예: SOOP, 삼성전자)을 뉴스와 무관하게 습관적으로 추천하지 마라
-          - "AI 관련"이라는 이유만으로 AI 플랫폼 기업을 추천하지 마라
-          - 수혜 근거가 명확하지 않으면 추천 자체를 하지 마라
-        
-        【점수 규칙】
-        - 9-10점: M&A 확정, $50M+ 자금조달, 대형 파트너십, SEC 8-K (M&A/자금조달)
-        - 8점: FDA 승인, 대형 계약 완료, 최대주주 변경
-        - 7점: 임상 성공, 중형 계약, 실적 서프라이즈
-        - 6점 이하: 단순 제품 출시, 정책 기대감, 간접 수혜
-        - 대형주(삼성전자, 엔비디아, 애플 등 시총 상위) 1등 추천 금지
-        ══════════════════════════════════════
-        
-        티커 추론 예시:
-        - "Auddia (NASDAQ: AUUD) Announces Merger" → ticker: "AUUD", name: "Auddia"
-        - "애경산업 인수 합의" → ticker: "018250", name: "애경산업"
-        - "LG화학 임상 3상 성공" → ticker: "051910", name: "LG화학"  (005930은 삼성전자!)
-        - "조선호텔 김치 수출" → ticker: "007230", name: "조선호텔앤리조트"
-        - "Nokken Acquires Space of Mind" → ticker: "비상장", name: "Nokken"
-        - "[공시] 8-K - M Evo Global Acquisition Corp II (0002087361)" → ticker: "비상장", name: "M Evo Global Acquisition Corp II"
+        분석 가이드:
+        1. 회사명: 뉴스 제목/본문에서 정확히 추출. UNKNOWN 금지.
+        2. 티커:
+           - 한국: 6자리 숫자만. 확실히 아는 경우에만 사용. 모르면 반드시 "비상장"
+           - 주요 한국 티커: 삼성전자=005930, 삼성화재=000810, 삼성증권=016360,
+             LG화학=051910, SK하이닉스=000660, SOOP=067160, 애경산업=018250,
+             한국콜마=161890, 두산에너빌리티=034020, 미래에셋증권=006800
+           - 미국: 정확한 심볼만. 모르면 "비상장"
+        3. 점수:
+           - 9~10점: M&A 확정, FDA 승인, 대규모 수주 확정
+           - 7~8점: 임상 성공, 실적 서프라이즈, 구체적 파트너십
+           - 4~6점: 제품 출시, 소규모 계약, 간접 테마
+           - 0~3점: 홍보성, 뒷북, 저품질
         
         JSON 형식:
         {{
-            "score": 0~10,
+            "score": 0~10 정수,
             "certainty": "confirmed" or "uncertain",
             "news_reliability": "high" or "medium" or "low",
             "summary": "핵심 요약 1줄",
             "key_catalyst": "핵심 재료",
-            "surge_timing": "단기(당일~3일)" or "중기(1~2주)" or "장기(1개월+)",
+            "surge_timing": "단기(당일~3일)" or "중기(1~2주)" or "없음",
             "ticker_in_news": "뉴스에 명시된 티커 (없으면 null)",
-            "top_ticker": "수혜주 1등 티커 (확실히 아는 코드만, 모르면 비상장)",
+            "top_ticker": "가장 큰 수혜주 1개 티커 (확실한 경우만, 불확실하면 null)",
             "recommendations": [
                 {{
-                    "rank": "1등 (대장주)",
-                    "ticker": "확실히 아는 종목코드만, 모르면 비상장/스타트업/섹터",
-                    "name": "반드시 실제 회사명 기재 (UNKNOWN 절대 금지)",
+                    "rank": "1등",
+                    "ticker": "확실한 티커 (모르면 비상장)",
+                    "name": "실제 회사명 (UNKNOWN 금지)",
                     "benefit_type": "직접수혜" or "간접수혜",
-                    "reason": "수혜 이유 (뉴스와의 직접 연관성 명시)"
-                }},
-                {{
-                    "rank": "2등",
-                    "ticker": "확실히 아는 종목코드만, 모르면 비상장/스타트업/섹터",
-                    "name": "반드시 실제 회사명 기재",
-                    "benefit_type": "직접수혜" or "간접수혜",
-                    "reason": "수혜 이유 (뉴스와의 직접 연관성 명시)"
-                }},
-                {{
-                    "rank": "3등",
-                    "ticker": "확실히 아는 종목코드만, 모르면 비상장/스타트업/섹터",
-                    "name": "반드시 실제 회사명 기재",
-                    "benefit_type": "직접수혜" or "간접수혜",
-                    "reason": "수혜 이유 (뉴스와의 직접 연관성 명시)"
+                    "reason": "본문 근거 구체적 이유 (20자 이상)"
                 }}
-            ],
-            "risk_factors": ["리스크 1", "리스크 2"]
+            ]
         }}
         """
 
@@ -328,22 +291,51 @@ class AIBrainV3:
                     logger.debug(f"⏭️ [{model}] 점수 부족 ({score} < {min_score}) → 스킵")
                     return None
 
-                # top_ticker 정규화 (검증 없이 AI 신뢰)
+                # top_ticker 정규화
                 top_ticker = result.get('top_ticker', '')
                 if not top_ticker or top_ticker.lower() in ('null', 'unknown', ''):
                     result['top_ticker'] = None
                 else:
                     result['top_ticker'] = top_ticker.strip()
 
-                # recommendations 회사명 UNKNOWN 방어
+                # 🚫 환각 필터: 본문/제목에 없는 SOOP/애경산업 등 제거
+                news_text = (news_item['title'] + ' ' + content_raw).upper()
+                HALLUCINATION_GUARD = {
+                    '067160': 'SOOP',
+                    '018250': '애경',
+                    '006800': '미래에셋증권',
+                }
+                filtered_recs = []
                 for rec in result.get('recommendations', []):
-                    # 🔧 회사명 UNKNOWN 방어: AI가 name을 UNKNOWN으로 반환한 경우
-                    # company_hint(SEC 파싱 회사명)가 있으면 1등에 채워줌
-                    name = rec.get('name', '')
+                    ticker = rec.get('ticker', '').strip()
+                    name   = rec.get('name', '').strip()
+
+                    # 회사명 UNKNOWN 방어
                     if (not name or name.upper() in ('UNKNOWN', 'UNKNOWN COMPANY', '')) and company_hint:
                         if rec.get('rank', '').startswith('1'):
                             rec['name'] = company_hint
-                            logger.info(f"🔧 1등 회사명 복원: {company_hint}")
+
+                    # 환각 체크: 해당 기업 이름이 본문에 없으면 제거
+                    guard_name = HALLUCINATION_GUARD.get(ticker)
+                    if guard_name and guard_name not in news_text:
+                        logger.warning(f"🚫 환각 필터: {name}({ticker}) 본문에 없음 → 제거")
+                        continue
+
+                    # reason 너무 짧으면 제거 (환각 추천은 이유가 막연함)
+                    if len(rec.get('reason', '')) < 10:
+                        continue
+
+                    filtered_recs.append(rec)
+
+                result['recommendations'] = filtered_recs
+
+                # top_ticker도 환각 필터 적용
+                tt = result.get('top_ticker')
+                if tt:
+                    guard_name = HALLUCINATION_GUARD.get(tt)
+                    if guard_name and guard_name not in news_text:
+                        logger.warning(f"🚫 top_ticker 환각: {tt} 제거")
+                        result['top_ticker'] = None
 
                 return result
 

@@ -220,8 +220,8 @@ class NewsEngineV3:
                     if self._is_duplicate(title, link):
                         continue
                     
-                    # 🔥 특징주, 단독, 속보 우선 처리
-                    is_priority = any(keyword in title for keyword in ['특징주', '단독', '속보', '긴급'])
+                    # 🔥 단독/속보/긴급만 우선 처리 (특징주는 이미 오른 뒤 → 제외)
+                    is_priority = any(keyword in title for keyword in ['단독', '속보', '긴급'])
                     
                     if not is_priority and not self._passes_keyword_filter(title):
                         continue
@@ -486,18 +486,21 @@ class NewsEngineV3:
         title_upper = title.upper()
 
         # 🚨 1순위: POSITIVE_OVERRIDE 체크 (악재 키워드 포함해도 무조건 통과)
-        # 예: "유상증자 철회"는 NEGATIVE의 "유상증자"를 포함하지만 강한 호재
         for override in Config.POSITIVE_OVERRIDE:
             if override.upper() in title_upper:
-                logger.debug(f"✅ OVERRIDE 통과: {override} | {title[:50]}")
                 return True
 
-        # 🚫 2순위: 악재 키워드 체크
+        # 🚫 2순위: LATE_KEYWORDS (뒷북 차단) - NEGATIVE보다 먼저!
+        for late in Config.LATE_KEYWORDS:
+            if late.upper() in title_upper:
+                return False
+
+        # 🚫 3순위: 악재 키워드 체크
         for negative in Config.NEGATIVE_KEYWORDS:
             if negative.upper() in title_upper:
                 return False
 
-        # ✅ 3순위: 호재 키워드 체크
+        # ✅ 4순위: 호재 키워드 체크
         for positive in Config.POSITIVE_KEYWORDS:
             if positive.upper() in title_upper:
                 return True
@@ -515,11 +518,11 @@ class NewsEngineV3:
         - 네이버 속보는 스킵 (외부 링크 다양해 파싱 불안정)
         - 실패해도 content = '' 로 fallback (분석은 제목으로 계속)
         """
-        SKIP_SOURCES = {'SEC 8-K', '네이버 증권 속보'}
+        # ✅ SKIP_SOURCES 제거: 네이버/SEC 포함 모든 소스 본문 읽기
+        # 본문 없이 제목만 분석 → SOOP/애경산업 환각의 근본 원인이었음
         targets = [
             item for item in news_list
-            if item.get('source') not in SKIP_SOURCES
-            and not item.get('content')
+            if not item.get('content')
         ]
 
         if not targets:
@@ -556,7 +559,24 @@ class NewsEngineV3:
             tag  = None
 
             # ── 소스별 본문 셀렉터 ──────────────────────────────
-            if source == 'PR Newswire':
+            tag  = None
+            text = ""
+
+            if source == '네이버 증권 속보':
+                # 네이버 뉴스 전용 (외부 링크 리다이렉트 시 범용 fallback)
+                tag = (soup.find('div', class_='articleCont') or
+                       soup.find('div', {'id': 'articleBodyContents'}) or
+                       soup.find('div', class_='article_body') or
+                       soup.find('div', {'id': 'content'}) or
+                       soup.find('article'))
+
+            elif source == 'SEC 8-K':
+                # SEC EDGAR: 전체 텍스트 추출 (핵심 내용이 뒤에 있어 1200자)
+                raw = soup.get_text(separator=' ', strip=True)
+                raw = re.sub(r'\s+', ' ', raw).strip()
+                text = raw[:1200]
+
+            elif source == 'PR Newswire':
                 tag = (soup.find('div', class_='release-body') or
                        soup.find('section', class_='release-body'))
 
@@ -591,8 +611,10 @@ class NewsEngineV3:
                            r'article|content|story|body', re.I)))
 
             # ── 공통 후처리 ──────────────────────────────────────
-            if tag:
+            if tag and not text:
                 text = tag.get_text(separator=' ', strip=True)
+
+            if text:
                 text = re.sub(r'\s+', ' ', text).strip()
                 text = text[:800]
 
